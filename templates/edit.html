@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edit Booking</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            background-color: #f5f7fa;
+            color: #222;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 30px 20px;
+        }
+
+        .panel {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            padding: 24px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+        }
+
+        h1 {
+            margin-top: 0;
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        input,
+        select,
+        button {
+            width: 100%;
+            padding: 10px 12px;
+            font-size: 14px;
+            border-radius: 6px;
+        }
+
+        input,
+        select {
+            border: 1px solid #ccc;
+            background: white;
+        }
+
+        button {
+            cursor: pointer;
+            border: none;
+            background-color: #2d6cdf;
+            color: white;
+        }
+
+        button:hover {
+            background-color: #1f57b8;
+        }
+
+        .actions {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 20px;
+        }
+
+        .actions a,
+        .actions button {
+            width: auto;
+        }
+
+        a {
+            color: #2d6cdf;
+            text-decoration: none;
+            align-self: center;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        .muted {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="panel">
+        <h1>Edit Booking</h1>
+        <p class="muted">Only new bookings can be edited.</p>
+
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+            <div class="form-group">
+                <label for="agent_name">Agent Name</label>
+                <input
+                    type="text"
+                    id="agent_name"
+                    name="agent_name"
+                    value="{{ booking['agent_name'] }}"
+                    required
+                >
+            </div>
+
+            <div class="form-group">
+                <label for="address">Property Address</label>
+                <input
+                    type="text"
+                    id="address"
+                    name="address"
+                    value="{{ booking['address'] }}"
+                    required
+                >
+            </div>
+
+            <div class="form-group">
+                <label for="property_type">Property Type</label>
+                <select id="property_type" name="property_type" required>
+                    <option value="flat" {% if booking["property_type"] == "flat" %}selected{% endif %}>Flat</option>
+                    <option value="terraced" {% if booking["property_type"] == "terraced" %}selected{% endif %}>Terraced</option>
+                    <option value="semi detached" {% if booking["property_type"] == "semi detached" %}selected{% endif %}>Semi Detached</option>
+                    <option value="detached" {% if booking["property_type"] == "detached" %}selected{% endif %}>Detached</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="bedrooms">Bedrooms</label>
+                <input
+                    type="number"
+                    id="bedrooms"
+                    name="bedrooms"
+                    min="0"
+                    value="{{ booking['bedrooms'] }}"
+                    required
+                >
+            </div>
+
+            <div class="form-group">
+                <label for="preferred_date">Preferred Date</label>
+                <input
+                    type="date"
+                    id="preferred_date"
+                    name="preferred_date"
+                    value="{{ booking['preferred_date'] }}"
+                    required
+                >
+            </div>
+
+            <div class="actions">
+                <button type="submit">Save Changes</button>
+                <a href="/">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+</body>
+</html>

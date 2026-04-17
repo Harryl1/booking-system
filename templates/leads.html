@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leads - AgencyHub</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg: #f6f9fc;
+            --panel: #ffffff;
+            --border: #e5e7eb;
+            --text: #1f2937;
+            --muted: #6b7280;
+            --sidebar: #111827;
+            --sidebar-hover: #1f2937;
+            --primary: #ff7a59;
+            --primary-dark: #e76545;
+            --secondary: #2563eb;
+            --success: #15803d;
+            --warning: #b45309;
+            --danger: #b91c1c;
+            --shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+            --radius: 14px;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+        }
+
+        .layout {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        .sidebar {
+            width: 250px;
+            background: var(--sidebar);
+            color: white;
+            padding: 24px 18px;
+        }
+
+        .brand {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 28px;
+        }
+
+        .sidebar a {
+            display: block;
+            color: white;
+            text-decoration: none;
+            padding: 11px 12px;
+            border-radius: 10px;
+            margin-bottom: 8px;
+            font-size: 15px;
+        }
+
+        .sidebar a:hover,
+        .sidebar a.active {
+            background: var(--sidebar-hover);
+        }
+
+        .main {
+            flex: 1;
+            padding: 24px;
+        }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .title-block h1 {
+            margin: 0;
+            font-size: 28px;
+        }
+
+        .title-block p {
+            margin: 6px 0 0 0;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .top-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn,
+        button {
+            border: none;
+            border-radius: 10px;
+            padding: 10px 14px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .btn {
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+        }
+
+        .btn-primary,
+        button.btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover,
+        button.btn-primary:hover {
+            background: var(--primary-dark);
+        }
+
+        .btn-secondary,
+        button.btn-secondary {
+            background: white;
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover,
+        button.btn-secondary:hover {
+            background: #f9fafb;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+        }
+
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .kpi-card {
+            padding: 18px;
+        }
+
+        .kpi-card .label {
+            font-size: 13px;
+            color: var(--muted);
+            margin-bottom: 8px;
+        }
+
+        .kpi-card .value {
+            font-size: 30px;
+            font-weight: bold;
+            margin-bottom: 6px;
+        }
+
+        .kpi-card .sub {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .workspace {
+            display: grid;
+            grid-template-columns: 1.9fr 1fr;
+            gap: 20px;
+        }
+
+        .left-col,
+        .right-col {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .section-subtitle {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .filter-panel,
+        .table-panel,
+        .side-panel {
+            padding: 18px;
+        }
+
+        .filter-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr auto;
+            gap: 12px;
+            align-items: end;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .field label {
+            font-size: 13px;
+            font-weight: bold;
+            color: #374151;
+        }
+
+        input,
+        select,
+        textarea {
+            width: 100%;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-size: 14px;
+            background: white;
+        }
+
+        textarea {
+            min-height: 70px;
+            resize: vertical;
+        }
+
+        .quick-filters {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 14px;
+        }
+
+        .chip {
+            text-decoration: none;
+            font-size: 13px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: #fff;
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+
+        .chip:hover {
+            background: #f9fafb;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+        }
+
+        th {
+            text-align: left;
+            font-size: 12px;
+            color: var(--muted);
+            padding: 12px 10px;
+            border-bottom: 1px solid var(--border);
+            background: #fafbfc;
+            position: sticky;
+            top: 0;
+        }
+
+        td {
+            padding: 14px 10px;
+            border-bottom: 1px solid #eef2f7;
+            vertical-align: top;
+            font-size: 14px;
+        }
+
+        tr:hover {
+            background: #fcfdff;
+        }
+
+        .lead-name {
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+
+        .lead-meta {
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
+        .lead-address {
+            max-width: 220px;
+            white-space: normal;
+            line-height: 1.4;
+        }
+
+        .phone-link,
+        .email-link {
+            color: var(--secondary);
+            text-decoration: none;
+        }
+
+        .phone-link:hover,
+        .email-link:hover {
+            text-decoration: underline;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+
+        .badge-new {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .badge-contacted {
+            background: #dbeafe;
+            color: #1d4ed8;
+        }
+
+        .badge-booked {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .badge-qualified {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .badge-lost {
+            background: #e5e7eb;
+            color: #4b5563;
+        }
+
+        .badge-source {
+            background: #f3e8ff;
+            color: #7e22ce;
+        }
+
+        .date-text,
+        .muted {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .notes-cell {
+            min-width: 180px;
+            max-width: 220px;
+            white-space: normal;
+            line-height: 1.4;
+        }
+
+        .action-stack {
+            min-width: 260px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .mini-form {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px;
+            background: #fafbfc;
+        }
+
+        .mini-form h4 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+        }
+
+        .mini-form .field {
+            margin-bottom: 10px;
+        }
+
+        .mini-form button {
+            width: 100%;
+        }
+
+        .btn-contacted {
+            background: var(--secondary);
+            color: white;
+        }
+
+        .btn-contacted:hover {
+            background: #1d4ed8;
+        }
+
+        .btn-booked {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-booked:hover {
+            background: #166534;
+        }
+
+        .side-panel h3 {
+            margin-top: 0;
+            margin-bottom: 14px;
+            font-size: 17px;
+        }
+
+        .metric-list,
+        .activity-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .metric-item,
+        .activity-item {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 14px;
+            background: #fff;
+        }
+
+        .metric-item strong,
+        .activity-item strong {
+            display: block;
+            margin-bottom: 6px;
+        }
+
+        .pipeline-row {
+            margin-bottom: 14px;
+        }
+
+        .pipeline-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            margin-bottom: 6px;
+        }
+
+        .progress {
+            width: 100%;
+            height: 10px;
+            background: #e5e7eb;
+            border-radius: 999px;
+            overflow: hidden;
+        }
+
+        .progress > div {
+            height: 100%;
+            background: var(--primary);
+        }
+
+        .empty {
+            color: var(--muted);
+            font-size: 14px;
+            padding: 10px 0;
+        }
+
+        @media (max-width: 1200px) {
+            .workspace {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 860px) {
+            .layout {
+                display: block;
+            }
+
+            .sidebar {
+                width: 100%;
+            }
+
+            .main {
+                padding: 16px;
+            }
+
+            .filter-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <div class="brand">AgencyHub</div>
+        <a href="/">Dashboard</a>
+        <a href="/leads" class="active">Leads</a>
+        <a href="/epc">EPCHub</a>
+        <a href="/logout">Logout</a>
+    </aside>
+
+    <main class="main">
+        <div class="topbar">
+            <div class="title-block">
+                <h1>Leads CRM</h1>
+                <p>Manage website valuation leads, Facebook campaign enquiries, and daily call follow-up.</p>
+            </div>
+
+            <div class="top-actions">
+                <a href="/leads?status=new" class="btn btn-secondary">New leads</a>
+                <a href="/leads?status=contacted" class="btn btn-secondary">Follow-up</a>
+                <a href="/leads?status=valuation booked" class="btn btn-secondary">Booked valuations</a>
+
+                {% if session.role == "agent" %}
+                <form method="POST" action="/leads/add-test" style="margin:0;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn-primary">Add test lead</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="kpi-grid">
+            <div class="panel kpi-card">
+                <div class="label">Total leads</div>
+                <div class="value">{{ total_leads }}</div>
+                <div class="sub">All lead sources</div>
+            </div>
+
+            <div class="panel kpi-card">
+                <div class="label">New leads</div>
+                <div class="value">{{ new_leads }}</div>
+                <div class="sub">Fresh inbound enquiries</div>
+            </div>
+
+            <div class="panel kpi-card">
+                <div class="label">Contacted</div>
+                <div class="value">{{ contacted_leads }}</div>
+                <div class="sub">Spoken to or attempted</div>
+            </div>
+
+            <div class="panel kpi-card">
+                <div class="label">Valuations booked</div>
+                <div class="value">{{ valuation_booked_leads }}</div>
+                <div class="sub">Core conversion metric</div>
+            </div>
+
+            <div class="panel kpi-card">
+                <div class="label">Conversion rate</div>
+                <div class="value">{{ conversion_rate }}%</div>
+                <div class="sub">Booked / total leads</div>
+            </div>
+        </div>
+
+        <div class="workspace">
+            <div class="left-col">
+                <div class="panel filter-panel">
+                    <div class="section-header">
+                        <div>
+                            <div class="section-title">Lead workspace</div>
+                            <div class="section-subtitle">Search, filter, call, and progress leads quickly.</div>
+                        </div>
+                    </div>
+
+                    <form method="GET">
+                        <div class="filter-grid">
+                            <div class="field">
+                                <label for="search">Search</label>
+                                <input
+                                    type="text"
+                                    id="search"
+                                    name="search"
+                                    placeholder="Name, phone, email, address"
+                                    value="{{ search_query }}"
+                                >
+                            </div>
+
+                            <div class="field">
+                                <label for="status">Status</label>
+                                <select id="status" name="status">
+                                    <option value="all" {% if status_filter == "all" %}selected{% endif %}>All statuses</option>
+                                    {% for s in lead_statuses %}
+                                        <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s|title }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            {% if source_filter is defined %}
+                            <div class="field">
+                                <label for="source">Source</label>
+                                <select id="source" name="source">
+                                    <option value="all" {% if source_filter == "all" %}selected{% endif %}>All sources</option>
+                                    <option value="website" {% if source_filter == "website" %}selected{% endif %}>Website</option>
+                                    <option value="facebook" {% if source_filter == "facebook" %}selected{% endif %}>Facebook</option>
+                                    <option value="manual" {% if source_filter == "manual" %}selected{% endif %}>Manual</option>
+                                </select>
+                            </div>
+                            {% endif %}
+
+                            <div class="field">
+                                <label>&nbsp;</label>
+                                <button type="submit" class="btn-primary">Apply filters</button>
+                            </div>
+                        </div>
+                    </form>
+
+                    <div class="quick-filters">
+                        <a class="chip" href="/leads">All leads</a>
+                        <a class="chip" href="/leads?status=new">New</a>
+                        <a class="chip" href="/leads?status=contacted">Contacted</a>
+                        <a class="chip" href="/leads?status=valuation booked">Valuation booked</a>
+                        {% if source_filter is defined %}
+                        <a class="chip" href="/leads?source=website">Website leads</a>
+                        <a class="chip" href="/leads?source=facebook">Facebook leads</a>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="panel table-panel">
+                    <div class="section-header">
+                        <div>
+                            <div class="section-title">Lead pipeline table</div>
+                            <div class="section-subtitle">Agents can call, update status, and book valuations directly from here.</div>
+                        </div>
+                    </div>
+
+                    <div class="table-wrap">
+                        <table>
+                            <tr>
+                                <th>Lead</th>
+                                <th>Address</th>
+                                <th>Value</th>
+                                <th>Source</th>
+                                <th>Status</th>
+                                <th>Dates</th>
+                                <th>Notes</th>
+                                {% if session.role == "agent" %}
+                                <th>Actions</th>
+                                {% endif %}
+                            </tr>
+
+                            {% for lead in leads %}
+                            <tr>
+                                <td>
+                                    <div class="lead-name">{{ lead["name"] }}</div>
+                                    <div class="lead-meta">
+                                        <a class="phone-link" href="tel:{{ lead['phone'] }}">{{ lead["phone"] }}</a><br>
+                                        <a class="email-link" href="mailto:{{ lead['email'] }}">{{ lead["email"] }}</a>
+                                    </div>
+                                </td>
+
+                                <td class="lead-address">{{ lead["address"] }}</td>
+
+                                <td>£{{ lead["valuation"] }}</td>
+
+                                <td>
+                                    <span class="badge badge-source">{{ lead["source"]|title }}</span>
+                                </td>
+
+                                <td>
+                                    {% if lead["status"] == "new" %}
+                                        <span class="badge badge-new">New</span>
+                                    {% elif lead["status"] == "contacted" %}
+                                        <span class="badge badge-contacted">Contacted</span>
+                                    {% elif lead["status"] == "valuation booked" %}
+                                        <span class="badge badge-booked">Valuation Booked</span>
+                                    {% elif lead["status"] == "qualified" %}
+                                        <span class="badge badge-qualified">Qualified</span>
+                                    {% else %}
+                                        <span class="badge badge-lost">{{ lead["status"]|title }}</span>
+                                    {% endif %}
+                                </td>
+
+                                <td>
+                                    <div class="date-text"><strong>Created:</strong> {{ lead["created_at"] or "-" }}</div>
+                                    <div class="date-text"><strong>Contacted:</strong> {{ lead["contacted_at"] or "-" }}</div>
+                                    <div class="date-text"><strong>Booked:</strong> {{ lead["valuation_booked_at"] or "-" }}</div>
+                                </td>
+
+                                <td class="notes-cell">{{ lead["notes"] or "-" }}</td>
+
+                                {% if session.role == "agent" %}
+                                <td>
+                                    <div class="action-stack">
+                                        {% if lead["status"] == "new" %}
+                                        <form method="POST" action="/leads/mark-contacted/{{ lead['id'] }}" class="mini-form">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                            <h4>Log contact</h4>
+                                            <div class="field">
+                                                <label>Contacted date</label>
+                                                <input type="date" name="contacted_at" required>
+                                            </div>
+                                            <div class="field">
+                                                <label>Notes</label>
+                                                <textarea name="notes" placeholder="Call outcome, motivation, objections, next step"></textarea>
+                                            </div>
+                                            <button type="submit" class="btn-contacted">Mark contacted</button>
+                                        </form>
+                                        {% endif %}
+
+                                        {% if lead["status"] != "valuation booked" and lead["status"] != "lost" %}
+                                        <form method="POST" action="/leads/book-valuation/{{ lead['id'] }}" class="mini-form">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                            <h4>Book valuation</h4>
+                                            <div class="field">
+                                                <label>Booked date</label>
+                                                <input type="date" name="valuation_booked_at" required>
+                                            </div>
+                                            <div class="field">
+                                                <label>Notes</label>
+                                                <textarea name="notes" placeholder="Appointment details, branch notes, seller context"></textarea>
+                                            </div>
+                                            <button type="submit" class="btn-booked">Book valuation</button>
+                                        </form>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                                {% endif %}
+                            </tr>
+                            {% endfor %}
+                        </table>
+
+                        {% if not leads %}
+                        <div class="empty">No leads found for the current filter.</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <div class="right-col">
+                <div class="panel side-panel">
+                    <h3>Funnel health</h3>
+
+                    <div class="pipeline-row">
+                        <div class="pipeline-label">
+                            <span>New</span>
+                            <span>{{ new_leads }}</span>
+                        </div>
+                        <div class="progress">
+                            <div style="width: {{ (new_leads / total_leads * 100) if total_leads else 0 }}%;"></div>
+                        </div>
+                    </div>
+
+                    <div class="pipeline-row">
+                        <div class="pipeline-label">
+                            <span>Contacted</span>
+                            <span>{{ contacted_leads }}</span>
+                        </div>
+                        <div class="progress">
+                            <div style="width: {{ (contacted_leads / total_leads * 100) if total_leads else 0 }}%;"></div>
+                        </div>
+                    </div>
+
+                    <div class="pipeline-row">
+                        <div class="pipeline-label">
+                            <span>Valuation booked</span>
+                            <span>{{ valuation_booked_leads }}</span>
+                        </div>
+                        <div class="progress">
+                            <div style="width: {{ (valuation_booked_leads / total_leads * 100) if total_leads else 0 }}%;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel side-panel">
+                    <h3>CRM guidance</h3>
+                    <div class="metric-list">
+                        <div class="metric-item">
+                            <strong>Best daily priority</strong>
+                            <div class="muted">Work new leads first, then chase contacted leads that have not yet booked a valuation.</div>
+                        </div>
+
+                        <div class="metric-item">
+                            <strong>Primary conversion event</strong>
+                            <div class="muted">A lead becomes commercially meaningful when a valuation is booked.</div>
+                        </div>
+
+                        <div class="metric-item">
+                            <strong>Source visibility</strong>
+                            <div class="muted">Track which leads are coming from website instant valuation tools versus Facebook campaigns.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel side-panel">
+                    <h3>Suggested activity view</h3>
+                    <div class="activity-list">
+                        <div class="activity-item">
+                            <strong>New lead queue</strong>
+                            <div class="muted">Use the New filter to speed through first contact attempts.</div>
+                        </div>
+                        <div class="activity-item">
+                            <strong>Follow-up queue</strong>
+                            <div class="muted">Use the Contacted filter to identify leads that need converting into valuations.</div>
+                        </div>
+                        <div class="activity-item">
+                            <strong>Booked view</strong>
+                            <div class="muted">Use the Valuation Booked filter as your conversion report.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+</body>
+</html>

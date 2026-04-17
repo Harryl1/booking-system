@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgencyHub</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f5f7fa;
+            color: #222;
+        }
+
+        .layout {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        .sidebar {
+            width: 240px;
+            background: #1f2937;
+            color: white;
+            padding: 24px 18px;
+        }
+
+        .sidebar h2 {
+            margin-top: 0;
+            margin-bottom: 24px;
+            font-size: 24px;
+        }
+
+        .sidebar a {
+            display: block;
+            color: white;
+            text-decoration: none;
+            padding: 10px 12px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+
+        .sidebar a:hover,
+        .sidebar a.active {
+            background: #374151;
+        }
+
+        .main {
+            flex: 1;
+            padding: 24px;
+        }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 24px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 12px;
+            padding: 16px 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+
+        .page-title {
+            margin: 0;
+        }
+
+        .subtext {
+            color: #666;
+            margin-top: 6px;
+            font-size: 14px;
+        }
+
+        .grid {
+            display: grid;
+            gap: 16px;
+        }
+
+        .kpi-grid {
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            margin-bottom: 24px;
+        }
+
+        .two-col {
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            margin-bottom: 24px;
+        }
+
+        .three-col {
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            margin-bottom: 24px;
+        }
+
+        .panel {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 12px;
+            padding: 18px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+
+        .panel h3 {
+            margin-top: 0;
+            margin-bottom: 14px;
+        }
+
+        .kpi-card h4 {
+            margin: 0 0 8px 0;
+            font-size: 14px;
+            color: #555;
+        }
+
+        .kpi-card p {
+            margin: 0;
+            font-size: 28px;
+            font-weight: bold;
+        }
+
+        .muted {
+            color: #666;
+            font-size: 13px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .badge-new {
+            background: #fdecea;
+            color: #c0392b;
+        }
+
+        .badge-contacted {
+            background: #eef4ff;
+            color: #2d6cdf;
+        }
+
+        .badge-qualified {
+            background: #fff5db;
+            color: #b7791f;
+        }
+
+        .badge-epc {
+            background: #ede9fe;
+            color: #6d28d9;
+        }
+
+        .badge-converted {
+            background: #e8f8ef;
+            color: #1e8449;
+        }
+
+        .badge-lost {
+            background: #f3f4f6;
+            color: #6b7280;
+        }
+
+        .badge-assigned {
+            background: #fff7e6;
+            color: #d68910;
+        }
+
+        .badge-completed {
+            background: #e8f8ef;
+            color: #1e8449;
+        }
+
+        .badge-overdue {
+            background: #fdecea;
+            color: #c0392b;
+        }
+
+        .quick-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .quick-links a {
+            text-decoration: none;
+            background: #2d6cdf;
+            color: white;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .quick-links a:hover {
+            background: #1f57b8;
+        }
+
+        .list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .list-item {
+            border: 1px solid #eee;
+            border-radius: 10px;
+            padding: 12px;
+            background: #fafafa;
+        }
+
+        .list-item strong {
+            display: block;
+            margin-bottom: 6px;
+        }
+
+        .list-item .meta {
+            color: #666;
+            font-size: 13px;
+            margin-top: 6px;
+        }
+
+        .progress-group {
+            margin-bottom: 14px;
+        }
+
+        .progress-label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 6px;
+            font-size: 14px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 10px;
+            background: #e5e7eb;
+            border-radius: 999px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: #2d6cdf;
+        }
+
+        .empty {
+            color: #666;
+            font-size: 14px;
+            padding: 8px 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        th {
+            font-size: 13px;
+            color: #555;
+        }
+
+        @media (max-width: 900px) {
+            .layout {
+                display: block;
+            }
+
+            .sidebar {
+                width: 100%;
+            }
+
+            .main {
+                padding: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <h2>AgencyHub</h2>
+        <a href="/" class="active">Dashboard</a>
+        <a href="/leads">Leads</a>
+        <a href="/epc">EPCHub</a>
+        <a href="/logout">Logout</a>
+    </aside>
+
+    <main class="main">
+        <div class="topbar">
+            <div>
+                <h1 class="page-title">Dashboard</h1>
+                <div class="subtext">
+                    Logged in as {{ session.username }} ({{ session.role }}) · Today: {{ today }}
+                </div>
+            </div>
+            <div class="quick-links">
+                <a href="/leads">View Leads</a>
+                <a href="/epc">Open EPCHub</a>
+            </div>
+        </div>
+
+        <div class="grid kpi-grid">
+            <div class="panel kpi-card">
+                <h4>Total Leads</h4>
+                <p>{{ total_leads }}</p>
+            </div>
+            <div class="panel kpi-card">
+                <h4>New Leads</h4>
+                <p>{{ new_leads }}</p>
+            </div>
+            <div class="panel kpi-card">
+                <h4>Qualified Leads</h4>
+                <p>{{ qualified_leads }}</p>
+            </div>
+            <div class="panel kpi-card">
+                <h4>EPC Required</h4>
+                <p>{{ valuation_booked_leads }}</p>
+            </div>
+            <div class="panel kpi-card">
+                <h4>My EPC Jobs</h4>
+                <p>{{ my_total_jobs }}</p>
+            </div>
+            <div class="panel kpi-card">
+                <h4>My Completed</h4>
+                <p>{{ my_completed_jobs }}</p>
+            </div>
+            <div class="panel kpi-card">
+                <h4>My Revenue</h4>
+                <p>£{{ my_revenue }}</p>
+            </div>
+            <div class="panel kpi-card">
+                <h4>Lead Conversion</h4>
+                <p>{{ lead_conversion_rate }}%</p>
+            </div>
+        </div>
+
+        <div class="grid two-col">
+            <div class="panel">
+                <h3>Lead Pipeline</h3>
+
+                <div class="progress-group">
+                    <div class="progress-label"><span>New</span><span>{{ new_leads }}</span></div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: {{ (new_leads / total_leads * 100) if total_leads else 0 }}%;"></div></div>
+                </div>
+
+                <div class="progress-group">
+                    <div class="progress-label"><span>Contacted</span><span>{{ contacted_leads }}</span></div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: {{ (contacted_leads / total_leads * 100) if total_leads else 0 }}%;"></div></div>
+                </div>
+
+                <div class="progress-group">
+                    <div class="progress-label"><span>Qualified</span><span>{{ qualified_leads }}</span></div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: {{ (qualified_leads / total_leads * 100) if total_leads else 0 }}%;"></div></div>
+                </div>
+
+                <div class="progress-group">
+                    <div class="progress-label"><span>EPC Required</span><span>{{ valuation_booked_leads }}</span></div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: {{ (epc_required_leads / total_leads * 100) if total_leads else 0 }}%;"></div></div>
+                </div>
+
+                <div class="progress-group">
+                    <div class="progress-label"><span>Converted</span><span>{{ valuation_booked_leads }}</span></div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: {{ (converted_leads / total_leads * 100) if total_leads else 0 }}%;"></div></div>
+                </div>
+
+                <div class="progress-group">
+                    <div class="progress-label"><span>Lost</span><span>{{ lost_leads }}</span></div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: {{ (lost_leads / total_leads * 100) if total_leads else 0 }}%;"></div></div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>EPC Performance</h3>
+                <div class="list">
+                    <div class="list-item">
+                        <strong>Total EPC Jobs</strong>
+                        <div class="meta">{{ total_epc_jobs_all }}</div>
+                    </div>
+                    <div class="list-item">
+                        <strong>New EPC Jobs</strong>
+                        <div class="meta">{{ total_epc_new_all }}</div>
+                    </div>
+                    <div class="list-item">
+                        <strong>Assigned EPC Jobs</strong>
+                        <div class="meta">{{ total_epc_assigned_all }}</div>
+                    </div>
+                    <div class="list-item">
+                        <strong>Completed EPC Jobs</strong>
+                        <div class="meta">{{ total_epc_completed_all }}</div>
+                    </div>
+                    <div class="list-item">
+                        <strong>Total EPC Revenue</strong>
+                        <div class="meta">£{{ total_revenue_all }}</div>
+                    </div>
+                    <div class="list-item">
+                        <strong>EPC Completion Rate</strong>
+                        <div class="meta">{{ epc_completion_rate }}%</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid three-col">
+            <div class="panel">
+                <h3>Recent Leads</h3>
+                {% if recent_leads %}
+                    <div class="list">
+                        {% for lead in recent_leads %}
+                            <div class="list-item">
+                                <strong>{{ lead["name"] }}</strong>
+                                <span class="badge
+                                    {% if lead['status'] == 'new' %}badge-new
+                                    {% elif lead['status'] == 'contacted' %}badge-contacted
+                                    {% elif lead['status'] == 'qualified' %}badge-qualified
+                                    {% elif lead['status'] == 'epc required' %}badge-epc
+                                    {% elif lead['status'] == 'converted' %}badge-converted
+                                    {% else %}badge-lost{% endif %}
+                                ">
+                                    {{ lead["status"]|title }}
+                                </span>
+                                <div class="meta">{{ lead["address"] }}</div>
+                                <div class="meta">{{ lead["email"] }} · {{ lead["phone"] }}</div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="empty">No leads yet.</div>
+                {% endif %}
+            </div>
+
+            <div class="panel">
+                <h3>Upcoming EPC Jobs</h3>
+                {% if upcoming_jobs %}
+                    <div class="list">
+                        {% for job in upcoming_jobs %}
+                            <div class="list-item">
+                                <strong>{{ job["address"] }}</strong>
+                                <span class="badge
+                                    {% if job['status'] == 'new' %}badge-new
+                                    {% elif job['status'] == 'assigned' %}badge-assigned
+                                    {% else %}badge-completed{% endif %}
+                                ">
+                                    {{ job["status"]|title }}
+                                </span>
+                                <div class="meta">{{ job["preferred_date"] }}</div>
+                                <div class="meta">{{ job["agent_name"] }} · £{{ job["price"] }}</div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="empty">No upcoming EPC jobs.</div>
+                {% endif %}
+            </div>
+
+            <div class="panel">
+                <h3>Overdue EPC Jobs</h3>
+                {% if overdue_jobs %}
+                    <div class="list">
+                        {% for job in overdue_jobs %}
+                            <div class="list-item">
+                                <strong>{{ job["address"] }}</strong>
+                                <span class="badge badge-overdue">Overdue</span>
+                                <div class="meta">Preferred: {{ job["preferred_date"] }}</div>
+                                <div class="meta">{{ job["agent_name"] }} · £{{ job["price"] }}</div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="empty">No overdue jobs.</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="grid two-col">
+            <div class="panel">
+                <h3>Recent EPC Bookings</h3>
+                {% if recent_bookings %}
+                    <table>
+                        <tr>
+                            <th>Address</th>
+                            <th>Date</th>
+                            <th>Status</th>
+                            <th>Price</th>
+                        </tr>
+                        {% for booking in recent_bookings %}
+                            <tr>
+                                <td>{{ booking["address"] }}</td>
+                                <td>{{ booking["preferred_date"] }}</td>
+                                <td>{{ booking["status"]|title }}</td>
+                                <td>£{{ booking["price"] }}</td>
+                            </tr>
+                        {% endfor %}
+                    </table>
+                {% else %}
+                    <div class="empty">No EPC bookings yet.</div>
+                {% endif %}
+            </div>
+
+            <div class="panel">
+                <h3>My Work Snapshot</h3>
+                <div class="list">
+                    <div class="list-item">
+                        <strong>My Total Jobs</strong>
+                        <div class="meta">{{ my_total_jobs }}</div>
+                    </div>
+                    <div class="list-item">
+                        <strong>My New Jobs</strong>
+                        <div class="meta">{{ my_new_jobs }}</div>
+                    </div>
+                    <div class="list-item">
+                        <strong>My Assigned Jobs</strong>
+                        <div class="meta">{{ my_assigned_jobs }}</div>
+                    </div>
+                    <div class="list-item">
+                        <strong>My Completed Jobs</strong>
+                        <div class="meta">{{ my_completed_jobs }}</div>
+                    </div>
+                    <div class="list-item">
+                        <strong>My Revenue</strong>
+                        <div class="meta">£{{ my_revenue }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+</body>
+</html>

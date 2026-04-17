@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EPCHub - AgencyHub</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg: #f6f9fc;
+            --panel: #ffffff;
+            --border: #e5e7eb;
+            --text: #1f2937;
+            --muted: #6b7280;
+            --sidebar: #111827;
+            --sidebar-hover: #1f2937;
+            --primary: #ff7a59;
+            --primary-dark: #e76545;
+            --secondary: #2563eb;
+            --success: #15803d;
+            --warning: #b45309;
+            --danger: #b91c1c;
+            --shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+            --radius: 14px;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+        }
+
+        .layout {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        .sidebar {
+            width: 250px;
+            background: var(--sidebar);
+            color: white;
+            padding: 24px 18px;
+        }
+
+        .brand {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 28px;
+        }
+
+        .sidebar a {
+            display: block;
+            color: white;
+            text-decoration: none;
+            padding: 11px 12px;
+            border-radius: 10px;
+            margin-bottom: 8px;
+            font-size: 15px;
+        }
+
+        .sidebar a:hover,
+        .sidebar a.active {
+            background: var(--sidebar-hover);
+        }
+
+        .main {
+            flex: 1;
+            padding: 24px;
+        }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .title-block h1 {
+            margin: 0;
+            font-size: 28px;
+        }
+
+        .title-block p {
+            margin: 6px 0 0 0;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .top-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn,
+        button {
+            border: none;
+            border-radius: 10px;
+            padding: 10px 14px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .btn {
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+        }
+
+        .btn-primary,
+        button.btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover,
+        button.btn-primary:hover {
+            background: var(--primary-dark);
+        }
+
+        .btn-secondary,
+        button.btn-secondary {
+            background: white;
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover,
+        button.btn-secondary:hover {
+            background: #f9fafb;
+        }
+
+        .btn-danger {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+        }
+
+        .btn-danger:hover {
+            background: #fecaca;
+        }
+
+        .btn-complete {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-complete:hover {
+            background: #166534;
+        }
+
+        .btn-assign {
+            background: var(--secondary);
+            color: white;
+        }
+
+        .btn-assign:hover {
+            background: #1d4ed8;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+        }
+
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .kpi-card {
+            padding: 18px;
+        }
+
+        .kpi-card .label {
+            font-size: 13px;
+            color: var(--muted);
+            margin-bottom: 8px;
+        }
+
+        .kpi-card .value {
+            font-size: 30px;
+            font-weight: bold;
+            margin-bottom: 6px;
+        }
+
+        .kpi-card .sub {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .workspace {
+            display: grid;
+            grid-template-columns: 1.95fr 1fr;
+            gap: 20px;
+        }
+
+        .left-col,
+        .right-col {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .section-subtitle {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .filter-panel,
+        .table-panel,
+        .form-panel,
+        .side-panel {
+            padding: 18px;
+        }
+
+        .filter-grid,
+        .create-grid {
+            display: grid;
+            gap: 12px;
+            align-items: end;
+        }
+
+        .filter-grid {
+            grid-template-columns: 2fr 1fr auto;
+        }
+
+        .create-grid {
+            grid-template-columns: repeat(3, 1fr);
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .field label {
+            font-size: 13px;
+            font-weight: bold;
+            color: #374151;
+        }
+
+        input,
+        select {
+            width: 100%;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-size: 14px;
+            background: white;
+        }
+
+        .quick-filters {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 14px;
+        }
+
+        .chip {
+            text-decoration: none;
+            font-size: 13px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: #fff;
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+
+        .chip:hover {
+            background: #f9fafb;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+        }
+
+        th {
+            text-align: left;
+            font-size: 12px;
+            color: var(--muted);
+            padding: 12px 10px;
+            border-bottom: 1px solid var(--border);
+            background: #fafbfc;
+            position: sticky;
+            top: 0;
+        }
+
+        td {
+            padding: 14px 10px;
+            border-bottom: 1px solid #eef2f7;
+            vertical-align: top;
+            font-size: 14px;
+        }
+
+        tr:hover {
+            background: #fcfdff;
+        }
+
+        tr.overdue-row {
+            background: #fff7f7;
+        }
+
+        .booking-id {
+            font-family: monospace;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .agent-name {
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+
+        .lead-meta {
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
+        .address-cell {
+            min-width: 220px;
+            max-width: 260px;
+            white-space: normal;
+            line-height: 1.4;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+
+        .badge-new {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .badge-assigned {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .badge-completed {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .badge-overdue {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .muted,
+        .date-text {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .action-stack {
+            min-width: 240px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .mini-form {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px;
+            background: #fafbfc;
+        }
+
+        .mini-form h4 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+        }
+
+        .mini-form .field {
+            margin-bottom: 10px;
+        }
+
+        .mini-form button {
+            width: 100%;
+        }
+
+        .text-link {
+            color: var(--secondary);
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        .text-link:hover {
+            text-decoration: underline;
+        }
+
+        .pill-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .side-panel h3 {
+            margin-top: 0;
+            margin-bottom: 14px;
+            font-size: 17px;
+        }
+
+        .metric-list,
+        .activity-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .metric-item,
+        .activity-item {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 14px;
+            background: #fff;
+        }
+
+        .metric-item strong,
+        .activity-item strong {
+            display: block;
+            margin-bottom: 6px;
+        }
+
+        .pipeline-row {
+            margin-bottom: 14px;
+        }
+
+        .pipeline-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            margin-bottom: 6px;
+        }
+
+        .progress {
+            width: 100%;
+            height: 10px;
+            background: #e5e7eb;
+            border-radius: 999px;
+            overflow: hidden;
+        }
+
+        .progress > div {
+            height: 100%;
+            background: var(--primary);
+        }
+
+        .empty {
+            color: var(--muted);
+            font-size: 14px;
+            padding: 10px 0;
+        }
+
+        @media (max-width: 1200px) {
+            .workspace {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 920px) {
+            .layout {
+                display: block;
+            }
+
+            .sidebar {
+                width: 100%;
+            }
+
+            .main {
+                padding: 16px;
+            }
+
+            .filter-grid,
+            .create-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <div class="brand">AgencyHub</div>
+        <a href="/">Dashboard</a>
+        <a href="/leads">Leads</a>
+        <a href="/epc" class="active">EPCHub</a>
+        <a href="/logout">Logout</a>
+    </aside>
+
+    <main class="main">
+        <div class="topbar">
+            <div class="title-block">
+                <h1>EPCHub</h1>
+                <p>Manage EPC bookings, assignments, completion workflow, and revenue performance.</p>
+            </div>
+
+            <div class="top-actions">
+                <a href="/epc?status=new" class="btn btn-secondary">New jobs</a>
+                <a href="/epc?status=assigned" class="btn btn-secondary">Assigned</a>
+                <a href="/epc?status=completed" class="btn btn-secondary">Completed</a>
+            </div>
+        </div>
+
+        <div class="kpi-grid">
+            <div class="panel kpi-card">
+                <div class="label">Total EPC jobs</div>
+                <div class="value">{{ total_jobs }}</div>
+                <div class="sub">All visible jobs</div>
+            </div>
+
+            <div class="panel kpi-card">
+                <div class="label">New</div>
+                <div class="value">{{ new_jobs }}</div>
+                <div class="sub">Awaiting assignment</div>
+            </div>
+
+            <div class="panel kpi-card">
+                <div class="label">Assigned</div>
+                <div class="value">{{ assigned_jobs }}</div>
+                <div class="sub">In progress</div>
+            </div>
+
+            <div class="panel kpi-card">
+                <div class="label">Completed</div>
+                <div class="value">{{ completed_jobs }}</div>
+                <div class="sub">Finished jobs</div>
+            </div>
+
+            <div class="panel kpi-card">
+                <div class="label">Revenue</div>
+                <div class="value">£{{ total_revenue }}</div>
+                <div class="sub">Completed bookings only</div>
+            </div>
+        </div>
+
+        <div class="workspace">
+            <div class="left-col">
+                {% if session.role == "agent" %}
+                <div class="panel form-panel">
+                    <div class="section-header">
+                        <div>
+                            <div class="section-title">Create EPC booking</div>
+                            <div class="section-subtitle">Add new instructions quickly for the agency pipeline.</div>
+                        </div>
+                    </div>
+
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <div class="create-grid">
+                            <div class="field">
+                                <label for="agent_name">Agent name</label>
+                                <input type="text" id="agent_name" name="agent_name" required>
+                            </div>
+
+                            <div class="field">
+                                <label for="address">Property address</label>
+                                <input type="text" id="address" name="address" required>
+                            </div>
+
+                            <div class="field">
+                                <label for="property_type">Property type</label>
+                                <select id="property_type" name="property_type" required>
+                                    <option value="flat">Flat</option>
+                                    <option value="terraced">Terraced</option>
+                                    <option value="semi detached">Semi Detached</option>
+                                    <option value="detached">Detached</option>
+                                </select>
+                            </div>
+
+                            <div class="field">
+                                <label for="bedrooms">Bedrooms</label>
+                                <input type="number" id="bedrooms" name="bedrooms" min="0" required>
+                            </div>
+
+                            <div class="field">
+                                <label for="preferred_date">Preferred date</label>
+                                <input type="date" id="preferred_date" name="preferred_date" required>
+                            </div>
+
+                            <div class="field">
+                                <label>&nbsp;</label>
+                                <button type="submit" class="btn-primary">Create booking</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                {% endif %}
+
+                <div class="panel filter-panel">
+                    <div class="section-header">
+                        <div>
+                            <div class="section-title">Booking workspace</div>
+                            <div class="section-subtitle">Search, filter, assign, and complete jobs from one place.</div>
+                        </div>
+                    </div>
+
+                    <form method="GET">
+                        <div class="filter-grid">
+                            <div class="field">
+                                <label for="search">Search</label>
+                                <input
+                                    type="text"
+                                    id="search"
+                                    name="search"
+                                    placeholder="Address or agent"
+                                    value="{{ search_query }}"
+                                >
+                            </div>
+
+                            <div class="field">
+                                <label for="status">Status</label>
+                                <select id="status" name="status">
+                                    <option value="all" {% if status_filter == "all" %}selected{% endif %}>All statuses</option>
+                                    <option value="new" {% if status_filter == "new" %}selected{% endif %}>New</option>
+                                    <option value="assigned" {% if status_filter == "assigned" %}selected{% endif %}>Assigned</option>
+                                    <option value="completed" {% if status_filter == "completed" %}selected{% endif %}>Completed</option>
+                                </select>
+                            </div>
+
+                            <div class="field">
+                                <label>&nbsp;</label>
+                                <button type="submit" class="btn-primary">Apply filters</button>
+                            </div>
+                        </div>
+                    </form>
+
+                    <div class="quick-filters">
+                        <a class="chip" href="/epc">All jobs</a>
+                        <a class="chip" href="/epc?status=new">New</a>
+                        <a class="chip" href="/epc?status=assigned">Assigned</a>
+                        <a class="chip" href="/epc?status=completed">Completed</a>
+                    </div>
+                </div>
+
+                <div class="panel table-panel">
+                    <div class="section-header">
+                        <div>
+                            <div class="section-title">EPC bookings table</div>
+                            <div class="section-subtitle">Operations view for job assignment, editing, completion, and tracking.</div>
+                        </div>
+                    </div>
+
+                    <div class="table-wrap">
+                        <table>
+                            <tr>
+                                <th>ID</th>
+                                <th>Booking</th>
+                                <th>Property</th>
+                                <th>Date</th>
+                                <th>Price</th>
+                                <th>Status</th>
+                                <th>Assessor</th>
+                                <th>Actions</th>
+                            </tr>
+
+                            {% for booking in bookings %}
+                            {% set is_overdue = booking["preferred_date"] < today and booking["status"] != "completed" if today is defined else false %}
+                            <tr class="{% if is_overdue %}overdue-row{% endif %}">
+                                <td>
+                                    <div class="booking-id">{{ booking["id"][:8] }}...</div>
+                                </td>
+
+                                <td>
+                                    <div class="agent-name">{{ booking["agent_name"] }}</div>
+                                    <div class="lead-meta">{{ booking["address"] }}</div>
+                                </td>
+
+                                <td class="address-cell">
+                                    <div>{{ booking["property_type"]|title }}</div>
+                                    <div class="lead-meta">{{ booking["bedrooms"] }} bedroom(s)</div>
+                                </td>
+
+                                <td>
+                                    <div>{{ booking["preferred_date"] }}</div>
+                                    {% if is_overdue %}
+                                        <div style="margin-top:6px;">
+                                            <span class="badge badge-overdue">Overdue</span>
+                                        </div>
+                                    {% endif %}
+                                </td>
+
+                                <td>£{{ booking["price"] }}</td>
+
+                                <td>
+                                    {% if booking["status"] == "new" %}
+                                        <span class="badge badge-new">New</span>
+                                    {% elif booking["status"] == "assigned" %}
+                                        <span class="badge badge-assigned">Assigned</span>
+                                    {% elif booking["status"] == "completed" %}
+                                        <span class="badge badge-completed">Completed</span>
+                                    {% else %}
+                                        <span class="badge">{{ booking["status"]|title }}</span>
+                                    {% endif %}
+                                </td>
+
+                                <td>
+                                    {% if booking["assigned_assessor_id"] %}
+                                        {{ assessor_map.get(booking["assigned_assessor_id"], "Unknown") }}
+                                    {% else %}
+                                        <span class="muted">Unassigned</span>
+                                    {% endif %}
+                                </td>
+
+                                <td>
+                                    <div class="action-stack">
+                                        {% if session.role == "agent" %}
+                                            {% if booking["status"] == "new" %}
+                                                <div class="pill-row">
+                                                    <a href="/epc/edit/{{ booking['id'] }}" class="text-link">Edit</a>
+                                                </div>
+
+                                                <form action="/epc/delete/{{ booking['id'] }}" method="POST" class="mini-form" onsubmit="return confirm('Delete this booking?');">
+                                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                                    <h4>Delete booking</h4>
+                                                    <button type="submit" class="btn-danger">Delete</button>
+                                                </form>
+
+                                                <form action="/epc/assign/{{ booking['id'] }}" method="POST" class="mini-form">
+                                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                                    <h4>Assign assessor</h4>
+                                                    <div class="field">
+                                                        <label>Assessor</label>
+                                                        <select name="assessor_id" required>
+                                                            {% for assessor in assessors %}
+                                                                <option value="{{ assessor['id'] }}">{{ assessor['username'] }}</option>
+                                                            {% endfor %}
+                                                        </select>
+                                                    </div>
+                                                    <button type="submit" class="btn-assign">Assign booking</button>
+                                                </form>
+                                            {% elif booking["status"] == "assigned" %}
+                                                <div class="muted">Assigned and in progress.</div>
+                                            {% elif booking["status"] == "completed" %}
+                                                <div class="muted">Job completed.</div>
+                                            {% endif %}
+
+                                        {% elif session.role == "assessor" %}
+                                            {% if booking["status"] == "assigned" %}
+                                                <form action="/epc/complete/{{ booking['id'] }}" method="POST" class="mini-form">
+                                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                                    <h4>Complete job</h4>
+                                                    <button type="submit" class="btn-complete">Mark completed</button>
+                                                </form>
+                                            {% elif booking["status"] == "completed" %}
+                                                <div class="muted">Completed.</div>
+                                            {% else %}
+                                                <div class="muted">Waiting.</div>
+                                            {% endif %}
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </table>
+
+                        {% if not bookings %}
+                        <div class="empty">No bookings found for the current filter.</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <div class="right-col">
+                <div class="panel side-panel">
+                    <h3>Workflow health</h3>
+
+                    <div class="pipeline-row">
+                        <div class="pipeline-label">
+                            <span>New</span>
+                            <span>{{ new_jobs }}</span>
+                        </div>
+                        <div class="progress">
+                            <div style="width: {{ (new_jobs / total_jobs * 100) if total_jobs else 0 }}%;"></div>
+                        </div>
+                    </div>
+
+                    <div class="pipeline-row">
+                        <div class="pipeline-label">
+                            <span>Assigned</span>
+                            <span>{{ assigned_jobs }}</span>
+                        </div>
+                        <div class="progress">
+                            <div style="width: {{ (assigned_jobs / total_jobs * 100) if total_jobs else 0 }}%;"></div>
+                        </div>
+                    </div>
+
+                    <div class="pipeline-row">
+                        <div class="pipeline-label">
+                            <span>Completed</span>
+                            <span>{{ completed_jobs }}</span>
+                        </div>
+                        <div class="progress">
+                            <div style="width: {{ (completed_jobs / total_jobs * 100) if total_jobs else 0 }}%;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel side-panel">
+                    <h3>Operations guidance</h3>
+                    <div class="metric-list">
+                        <div class="metric-item">
+                            <strong>Best daily priority</strong>
+                            <div class="muted">Assign new jobs quickly and keep overdue instructions visible until completed.</div>
+                        </div>
+
+                        <div class="metric-item">
+                            <strong>Agent workflow</strong>
+                            <div class="muted">Create, edit, assign, and manage bookings before they move into completion.</div>
+                        </div>
+
+                        <div class="metric-item">
+                            <strong>Assessor workflow</strong>
+                            <div class="muted">Focus only on assigned work and mark jobs complete as soon as reports are done.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel side-panel">
+                    <h3>Suggested views</h3>
+                    <div class="activity-list">
+                        <div class="activity-item">
+                            <strong>New jobs queue</strong>
+                            <div class="muted">Use the New filter to clear bookings awaiting assignment.</div>
+                        </div>
+                        <div class="activity-item">
+                            <strong>Assigned queue</strong>
+                            <div class="muted">Use Assigned to manage assessor workload and identify jobs still outstanding.</div>
+                        </div>
+                        <div class="activity-item">
+                            <strong>Completed view</strong>
+                            <div class="muted">Use Completed as your historical performance and revenue record.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+</body>
+</html>
