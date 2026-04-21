@@ -348,7 +348,8 @@ def logout():
 def agencyhub():
     db = get_db()
     total_leads = db.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
-    return f"Total leads: {total_leads}"
+    total_bookings = db.execute("SELECT COUNT(*) FROM bookings").fetchone()[0]
+    return f"Total leads: {total_leads}, Total bookings: {total_bookings}"
 
 # -----------------------
 # Leads Module
