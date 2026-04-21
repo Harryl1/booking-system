@@ -346,7 +346,7 @@ def logout():
 @app.route("/")
 @login_required
 def agencyhub():
-    return render_template("agencyhub.html")
+    return "<h1>Template test passed</h1>"
 
 # -----------------------
 # Leads Module
