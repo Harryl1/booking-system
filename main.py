@@ -947,35 +947,33 @@ def save_lead():
 
     try:
         valuation = int(float(valuation))
-    except (TypeError, ValueError):
-        return jsonify({"success": False, "error": "Invalid valuation"}), 400
 
-    db = get_db()
-    db.execute("""
-        INSERT INTO leads (
-            name, email, phone, address, valuation,
-            source, status, created_at, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        name,
-        email,
-        phone,
-        address,
-        valuation,
-        source,
-        LEAD_STATUS_NEW,
-        created_at,
-        notes
-    ))
-    db.commit()
-    print("LEAD SAVED SUCCESSFULLY")
+        db = get_db()
+        db.execute("""
+            INSERT INTO leads (
+                name, email, phone, address, valuation,
+                source, status, created_at, notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            name,
+            email,
+            phone,
+            address,
+            valuation,
+            source,
+            LEAD_STATUS_NEW,
+            created_at,
+            notes
+        ))
 
-    return jsonify({"success": True})
+        db.commit()
+        print("LEAD SAVED SUCCESSFULLY")
 
-except Exception as e:
-    print("ERROR SAVING LEAD:", str(e))
-    return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": True})
 
+    except Exception as e:
+        print("ERROR SAVING LEAD:", str(e))
+        return jsonify({"success": False, "error": str(e)}), 500
 # -----------------------
 # App Entrypoint
 # -----------------------
