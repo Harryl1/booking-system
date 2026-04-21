@@ -346,178 +346,7 @@ def logout():
 @app.route("/")
 @login_required
 def agencyhub():
-    db = get_db()
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    total_leads = db.execute(
-        "SELECT COUNT(*) FROM leads"
-    ).fetchone()[0]
-
-    new_leads = db.execute(
-        "SELECT COUNT(*) FROM leads WHERE status = ?",
-        (LEAD_STATUS_NEW,)
-    ).fetchone()[0]
-
-    contacted_leads = db.execute(
-        "SELECT COUNT(*) FROM leads WHERE status = ?",
-        (LEAD_STATUS_CONTACTED,)
-    ).fetchone()[0]
-
-    qualified_leads = db.execute(
-        "SELECT COUNT(*) FROM leads WHERE status = ?",
-        (LEAD_STATUS_QUALIFIED,)
-    ).fetchone()[0]
-
-    valuation_booked_leads = db.execute(
-        "SELECT COUNT(*) FROM leads WHERE status = ?",
-        (LEAD_STATUS_VALUATION_BOOKED,)
-    ).fetchone()[0]
-
-    valuation_booked_leads = db.execute(
-        "SELECT COUNT(*) FROM leads WHERE status = ?",
-        (LEAD_STATUS_VALUATION_BOOKED,)
-    ).fetchone()[0]
-
-    lost_leads = db.execute(
-        "SELECT COUNT(*) FROM leads WHERE status = ?",
-        (LEAD_STATUS_LOST,)
-    ).fetchone()[0]
-
-    recent_leads = db.execute("""
-        SELECT *
-        FROM leads
-        ORDER BY id DESC
-        LIMIT 5
-    """).fetchall()
-
-    upcoming_jobs = db.execute("""
-        SELECT *
-        FROM bookings
-        WHERE preferred_date >= ?
-        ORDER BY preferred_date ASC, rowid DESC
-        LIMIT 5
-    """, (today,)).fetchall()
-
-    overdue_jobs = db.execute("""
-        SELECT *
-        FROM bookings
-        WHERE preferred_date < ? AND status != ?
-        ORDER BY preferred_date ASC, rowid DESC
-        LIMIT 5
-    """, (today, STATUS_COMPLETED)).fetchall()
-
-    recent_bookings = db.execute("""
-        SELECT *
-        FROM bookings
-        ORDER BY rowid DESC
-        LIMIT 5
-    """).fetchall()
-
-    total_epc_jobs_all = db.execute(
-        "SELECT COUNT(*) FROM bookings"
-    ).fetchone()[0]
-
-    total_epc_completed_all = db.execute(
-        "SELECT COUNT(*) FROM bookings WHERE status = ?",
-        (STATUS_COMPLETED,)
-    ).fetchone()[0]
-
-    total_epc_assigned_all = db.execute(
-        "SELECT COUNT(*) FROM bookings WHERE status = ?",
-        (STATUS_ASSIGNED,)
-    ).fetchone()[0]
-
-    total_epc_new_all = db.execute(
-        "SELECT COUNT(*) FROM bookings WHERE status = ?",
-        (STATUS_NEW,)
-    ).fetchone()[0]
-
-    total_revenue_all = db.execute(
-        "SELECT COALESCE(SUM(price), 0) FROM bookings WHERE status = ?",
-        (STATUS_COMPLETED,)
-    ).fetchone()[0]
-
-    if session["role"] == ROLE_AGENT:
-        my_total_jobs = db.execute(
-            "SELECT COUNT(*) FROM bookings WHERE user_id = ?",
-            (session["user_id"],)
-        ).fetchone()[0]
-
-        my_new_jobs = db.execute(
-            "SELECT COUNT(*) FROM bookings WHERE user_id = ? AND status = ?",
-            (session["user_id"], STATUS_NEW)
-        ).fetchone()[0]
-
-        my_assigned_jobs = db.execute(
-            "SELECT COUNT(*) FROM bookings WHERE user_id = ? AND status = ?",
-            (session["user_id"], STATUS_ASSIGNED)
-        ).fetchone()[0]
-
-        my_completed_jobs = db.execute(
-            "SELECT COUNT(*) FROM bookings WHERE user_id = ? AND status = ?",
-            (session["user_id"], STATUS_COMPLETED)
-        ).fetchone()[0]
-
-        my_revenue = db.execute(
-            "SELECT COALESCE(SUM(price), 0) FROM bookings WHERE user_id = ? AND status = ?",
-            (session["user_id"], STATUS_COMPLETED)
-        ).fetchone()[0]
-    else:
-        my_total_jobs = db.execute(
-            "SELECT COUNT(*) FROM bookings WHERE assigned_assessor_id = ?",
-            (session["user_id"],)
-        ).fetchone()[0]
-
-        my_new_jobs = 0
-
-        my_assigned_jobs = db.execute(
-            "SELECT COUNT(*) FROM bookings WHERE assigned_assessor_id = ? AND status = ?",
-            (session["user_id"], STATUS_ASSIGNED)
-        ).fetchone()[0]
-
-        my_completed_jobs = db.execute(
-            "SELECT COUNT(*) FROM bookings WHERE assigned_assessor_id = ? AND status = ?",
-            (session["user_id"], STATUS_COMPLETED)
-        ).fetchone()[0]
-
-        my_revenue = 0
-
-    lead_conversion_rate = 0
-    if total_leads > 0:
-        lead_conversion_rate = round((valuation_booked_leads / total_leads) * 100, 1) if total_leads else 0
-
-    epc_completion_rate = 0
-    if total_epc_jobs_all > 0:
-        epc_completion_rate = round((total_epc_completed_all / total_epc_jobs_all) * 100, 1)
-
-    return render_template(
-        "agencyhub.html",
-        today=today,
-        total_leads=total_leads,
-        new_leads=new_leads,
-        contacted_leads=contacted_leads,
-        qualified_leads=qualified_leads,
-        valuation_booked_leads=valuation_booked_leads,
-        lost_leads=lost_leads,
-        recent_leads=recent_leads,
-        upcoming_jobs=upcoming_jobs,
-        overdue_jobs=overdue_jobs,
-        recent_bookings=recent_bookings,
-        total_epc_jobs_all=total_epc_jobs_all,
-        total_epc_new_all=total_epc_new_all,
-        total_epc_assigned_all=total_epc_assigned_all,
-        total_epc_completed_all=total_epc_completed_all,
-        total_revenue_all=total_revenue_all,
-        my_total_jobs=my_total_jobs,
-        my_new_jobs=my_new_jobs,
-        my_assigned_jobs=my_assigned_jobs,
-        my_completed_jobs=my_completed_jobs,
-        my_revenue=my_revenue,
-        lead_conversion_rate=lead_conversion_rate,
-        epc_completion_rate=epc_completion_rate,
-        csrf_token=get_csrf_token()
-    )
-
+    return "Dashboard route works"
 
 # -----------------------
 # Leads Module
@@ -1075,6 +904,18 @@ from flask import request, jsonify
 from datetime import datetime
 import sqlite3
 
+@app.get("/debug-leads")
+def debug_leads():
+    conn = sqlite3.connect("bookings.db")
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM leads ORDER BY rowid DESC LIMIT 10")
+    rows = cursor.fetchall()
+    conn.close()
+
+    return jsonify([dict(row) for row in rows])
+
 @app.route("/save-lead", methods=["GET", "POST"])
 def save_lead():
     if request.method == "GET":
@@ -1082,29 +923,47 @@ def save_lead():
 
     data = request.get_json(force=True)
 
-    conn = sqlite3.connect("bookings.db")
-    cursor = conn.cursor()
+    name = (data.get("name") or data.get("full_name") or "").strip()
+    email = (data.get("email") or "").strip()
+    phone = (data.get("phone") or "").strip()
+    address = (data.get("address") or "").strip()
+    valuation = data.get("valuation", 0)
+    source = (data.get("source") or "property_tool").strip()
+    created_at = data.get("created_at") or datetime.now().isoformat()
+    notes = (data.get("notes") or "").strip()
 
-    cursor.execute("""
+    if not name:
+        return jsonify({"success": False, "error": "Missing name"}), 400
+    if not email:
+        return jsonify({"success": False, "error": "Missing email"}), 400
+    if not phone:
+        return jsonify({"success": False, "error": "Missing phone"}), 400
+    if not address:
+        return jsonify({"success": False, "error": "Missing address"}), 400
+
+    try:
+        valuation = int(float(valuation))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "Invalid valuation"}), 400
+
+    db = get_db()
+    db.execute("""
         INSERT INTO leads (
-            full_name,
-            email,
-            phone,
-            source,
-            created_at,
-            notes
-        ) VALUES (?, ?, ?, ?, ?, ?)
+            name, email, phone, address, valuation,
+            source, status, created_at, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        data.get("full_name", ""),
-        data.get("email", ""),
-        data.get("phone", ""),
-        data.get("source", "property_tool"),
-        data.get("created_at", datetime.now().isoformat()),
-        data.get("notes", "")
+        name,
+        email,
+        phone,
+        address,
+        valuation,
+        source,
+        LEAD_STATUS_NEW,
+        created_at,
+        notes
     ))
-
-    conn.commit()
-    conn.close()
+    db.commit()
 
     return jsonify({"success": True})
 
