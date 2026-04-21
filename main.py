@@ -925,6 +925,7 @@ def save_lead():
         return jsonify({"status": "save-lead route is working"})
 
     data = request.get_json(force=True)
+    print("INCOMING LEAD:", data)
 
     name = (data.get("name") or data.get("full_name") or "").strip()
     email = (data.get("email") or "").strip()
@@ -967,8 +968,13 @@ def save_lead():
         notes
     ))
     db.commit()
+    print("LEAD SAVED SUCCESSFULLY")
 
     return jsonify({"success": True})
+
+except Exception as e:
+    print("ERROR SAVING LEAD:", str(e))
+    return jsonify({"success": False, "error": str(e)}), 500
 
 # -----------------------
 # App Entrypoint
