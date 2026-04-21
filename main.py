@@ -346,7 +346,9 @@ def logout():
 @app.route("/")
 @login_required
 def agencyhub():
-    return "Dashboard route works"
+    db = get_db()
+    total_leads = db.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
+    return f"Total leads: {total_leads}"
 
 # -----------------------
 # Leads Module
