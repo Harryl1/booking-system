@@ -346,32 +346,171 @@ def logout():
 @app.route("/")
 @login_required
 def agencyhub():
+    db = get_db()
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    total_leads = db.execute(
+        "SELECT COUNT(*) FROM leads"
+    ).fetchone()[0]
+
+    new_leads = db.execute(
+        "SELECT COUNT(*) FROM leads WHERE status = ?",
+        (LEAD_STATUS_NEW,)
+    ).fetchone()[0]
+
+    contacted_leads = db.execute(
+        "SELECT COUNT(*) FROM leads WHERE status = ?",
+        (LEAD_STATUS_CONTACTED,)
+    ).fetchone()[0]
+
+    qualified_leads = db.execute(
+        "SELECT COUNT(*) FROM leads WHERE status = ?",
+        (LEAD_STATUS_QUALIFIED,)
+    ).fetchone()[0]
+
+    valuation_booked_leads = db.execute(
+        "SELECT COUNT(*) FROM leads WHERE status = ?",
+        (LEAD_STATUS_VALUATION_BOOKED,)
+    ).fetchone()[0]
+
+    lost_leads = db.execute(
+        "SELECT COUNT(*) FROM leads WHERE status = ?",
+        (LEAD_STATUS_LOST,)
+    ).fetchone()[0]
+
+    recent_leads = db.execute("""
+        SELECT *
+        FROM leads
+        ORDER BY id DESC
+        LIMIT 5
+    """).fetchall()
+
+    upcoming_jobs = db.execute("""
+        SELECT *
+        FROM bookings
+        WHERE preferred_date >= ?
+        ORDER BY preferred_date ASC, rowid DESC
+        LIMIT 5
+    """, (today,)).fetchall()
+
+    overdue_jobs = db.execute("""
+        SELECT *
+        FROM bookings
+        WHERE preferred_date < ? AND status != ?
+        ORDER BY preferred_date ASC, rowid DESC
+        LIMIT 5
+    """, (today, STATUS_COMPLETED)).fetchall()
+
+    recent_bookings = db.execute("""
+        SELECT *
+        FROM bookings
+        ORDER BY rowid DESC
+        LIMIT 5
+    """).fetchall()
+
+    total_epc_jobs_all = db.execute(
+        "SELECT COUNT(*) FROM bookings"
+    ).fetchone()[0]
+
+    total_epc_completed_all = db.execute(
+        "SELECT COUNT(*) FROM bookings WHERE status = ?",
+        (STATUS_COMPLETED,)
+    ).fetchone()[0]
+
+    total_epc_assigned_all = db.execute(
+        "SELECT COUNT(*) FROM bookings WHERE status = ?",
+        (STATUS_ASSIGNED,)
+    ).fetchone()[0]
+
+    total_epc_new_all = db.execute(
+        "SELECT COUNT(*) FROM bookings WHERE status = ?",
+        (STATUS_NEW,)
+    ).fetchone()[0]
+
+    total_revenue_all = db.execute(
+        "SELECT COALESCE(SUM(price), 0) FROM bookings WHERE status = ?",
+        (STATUS_COMPLETED,)
+    ).fetchone()[0]
+
+    if session["role"] == ROLE_AGENT:
+        my_total_jobs = db.execute(
+            "SELECT COUNT(*) FROM bookings WHERE user_id = ?",
+            (session["user_id"],)
+        ).fetchone()[0]
+
+        my_new_jobs = db.execute(
+            "SELECT COUNT(*) FROM bookings WHERE user_id = ? AND status = ?",
+            (session["user_id"], STATUS_NEW)
+        ).fetchone()[0]
+
+        my_assigned_jobs = db.execute(
+            "SELECT COUNT(*) FROM bookings WHERE user_id = ? AND status = ?",
+            (session["user_id"], STATUS_ASSIGNED)
+        ).fetchone()[0]
+
+        my_completed_jobs = db.execute(
+            "SELECT COUNT(*) FROM bookings WHERE user_id = ? AND status = ?",
+            (session["user_id"], STATUS_COMPLETED)
+        ).fetchone()[0]
+
+        my_revenue = db.execute(
+            "SELECT COALESCE(SUM(price), 0) FROM bookings WHERE user_id = ? AND status = ?",
+            (session["user_id"], STATUS_COMPLETED)
+        ).fetchone()[0]
+    else:
+        my_total_jobs = db.execute(
+            "SELECT COUNT(*) FROM bookings WHERE assigned_assessor_id = ?",
+            (session["user_id"],)
+        ).fetchone()[0]
+
+        my_new_jobs = 0
+
+        my_assigned_jobs = db.execute(
+            "SELECT COUNT(*) FROM bookings WHERE assigned_assessor_id = ? AND status = ?",
+            (session["user_id"], STATUS_ASSIGNED)
+        ).fetchone()[0]
+
+        my_completed_jobs = db.execute(
+            "SELECT COUNT(*) FROM bookings WHERE assigned_assessor_id = ? AND status = ?",
+            (session["user_id"], STATUS_COMPLETED)
+        ).fetchone()[0]
+
+        my_revenue = 0
+
+    lead_conversion_rate = 0
+    if total_leads > 0:
+        lead_conversion_rate = round((valuation_booked_leads / total_leads) * 100, 1)
+
+    epc_completion_rate = 0
+    if total_epc_jobs_all > 0:
+        epc_completion_rate = round((total_epc_completed_all / total_epc_jobs_all) * 100, 1)
+
     return render_template(
         "agencyhub.html",
-        today="",
-        total_leads=0,
-        new_leads=0,
-        contacted_leads=0,
-        qualified_leads=0,
-        valuation_booked_leads=0,
-        lost_leads=0,
-        recent_leads=[],
-        upcoming_jobs=[],
-        overdue_jobs=[],
-        recent_bookings=[],
-        total_epc_jobs_all=0,
-        total_epc_new_all=0,
-        total_epc_assigned_all=0,
-        total_epc_completed_all=0,
-        total_revenue_all=0,
-        my_total_jobs=0,
-        my_new_jobs=0,
-        my_assigned_jobs=0,
-        my_completed_jobs=0,
-        my_revenue=0,
-        lead_conversion_rate=0,
-        epc_completion_rate=0,
-        csrf_token=""
+        today=today,
+        total_leads=total_leads,
+        new_leads=new_leads,
+        contacted_leads=contacted_leads,
+        qualified_leads=qualified_leads,
+        valuation_booked_leads=valuation_booked_leads,
+        lost_leads=lost_leads,
+        recent_leads=recent_leads,
+        upcoming_jobs=upcoming_jobs,
+        overdue_jobs=overdue_jobs,
+        recent_bookings=recent_bookings,
+        total_epc_jobs_all=total_epc_jobs_all,
+        total_epc_new_all=total_epc_new_all,
+        total_epc_assigned_all=total_epc_assigned_all,
+        total_epc_completed_all=total_epc_completed_all,
+        total_revenue_all=total_revenue_all,
+        my_total_jobs=my_total_jobs,
+        my_new_jobs=my_new_jobs,
+        my_assigned_jobs=my_assigned_jobs,
+        my_completed_jobs=my_completed_jobs,
+        my_revenue=my_revenue,
+        lead_conversion_rate=lead_conversion_rate,
+        epc_completion_rate=epc_completion_rate,
+        csrf_token=get_csrf_token()
     )
 
 # -----------------------
