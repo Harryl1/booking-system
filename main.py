@@ -116,6 +116,24 @@ def init_db():
     """)
 
     db.commit()
+def ensure_lead_action_columns():
+    db = get_db()
+
+    existing_columns = {
+        row["name"]
+        for row in db.execute("PRAGMA table_info(leads)").fetchall()
+    }
+
+    if "lead_stage" not in existing_columns:
+        db.execute("ALTER TABLE leads ADD COLUMN lead_stage TEXT")
+
+    if "is_hot_lead" not in existing_columns:
+        db.execute("ALTER TABLE leads ADD COLUMN is_hot_lead INTEGER NOT NULL DEFAULT 0")
+
+    if "updated_at" not in existing_columns:
+        db.execute("ALTER TABLE leads ADD COLUMN updated_at TEXT")
+
+    db.commit()
 
 
 # -----------------------
@@ -649,7 +667,7 @@ def add_test_lead():
     validate_csrf()
 
     db = get_db()
-    conn.execute("""
+    db.execute("""
         INSERT INTO leads (
             name, email, phone, address, valuation,
             source, status, created_at, notes
@@ -1114,8 +1132,9 @@ def save_lead():
         db.execute("""
             INSERT INTO leads (
                 name, email, phone, address, valuation,
-                source, status, created_at, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                source, status, created_at, notes,
+                lead_stage, is_hot_lead, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             name,
             email,
@@ -1125,7 +1144,10 @@ def save_lead():
             source,
             LEAD_STATUS_NEW,
             created_at,
-            notes
+            notes,
+            "report_generated",
+            0,
+            created_at
         ))
 
         db.commit()
@@ -1136,10 +1158,77 @@ def save_lead():
     except Exception as e:
         print("ERROR SAVING LEAD:", str(e))
         return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/update-lead", methods=["POST"])
+def update_lead():
+    data = request.get_json(force=True)
+
+    email = (data.get("email") or "").strip().lower()
+    lead_stage = (data.get("lead_stage") or "").strip()
+    is_hot_lead = 1 if data.get("is_hot_lead") else 0
+    updated_at = (data.get("updated_at") or datetime.now().isoformat()).strip()
+
+    if not email:
+        return jsonify({"success": False, "error": "Missing email"}), 400
+
+    if not lead_stage:
+        return jsonify({"success": False, "error": "Missing lead_stage"}), 400
+
+    try:
+        db = get_db()
+
+        lead = db.execute(
+            "SELECT id, notes FROM leads WHERE LOWER(email) = ? ORDER BY id DESC LIMIT 1",
+            (email,)
+        ).fetchone()
+
+        if lead is None:
+            return jsonify({"success": False, "error": "Lead not found"}), 404
+
+        existing_notes = lead["notes"] or ""
+        new_note_line = f"[{updated_at}] lead action: {lead_stage}"
+        updated_notes = (existing_notes + "\n" + new_note_line).strip()
+
+        db.execute("""
+            UPDATE leads
+            SET lead_stage = ?,
+                is_hot_lead = ?,
+                updated_at = ?,
+                notes = ?
+            WHERE id = ?
+        """, (
+            lead_stage,
+            is_hot_lead,
+            updated_at,
+            updated_notes,
+            lead["id"]
+        ))
+
+        db.commit()
+
+        print("LEAD UPDATED:", {
+            "email": email,
+            "lead_stage": lead_stage,
+            "is_hot_lead": is_hot_lead,
+            "updated_at": updated_at
+        })
+
+        return jsonify({
+            "success": True,
+            "message": "Lead updated",
+            "email": email,
+            "lead_stage": lead_stage,
+            "is_hot_lead": bool(is_hot_lead)
+        })
+
+    except Exception as e:
+        print("ERROR UPDATING LEAD:", str(e))
+        return jsonify({"success": False, "error": str(e)}), 500
 # -----------------------
 # App Entrypoint
 # -----------------------
 if __name__ == "__main__":
     with app.app_context():
         init_db()
+        ensure_lead_action_columns()
     app.run(debug=True)
