@@ -105,6 +105,46 @@ VALID_LEAD_STATUSES = {
     LEAD_STATUS_LOST,
 }
 VALID_PROPERTY_TYPES = {"flat", "terraced", "semi detached", "detached"}
+SERVICE_VALUATION = "valuation"
+SERVICE_EPC = "epc"
+SERVICE_SOLICITOR = "solicitor"
+SERVICE_MORTGAGE = "mortgage"
+VALID_SERVICE_TYPES = {
+    SERVICE_VALUATION,
+    SERVICE_EPC,
+    SERVICE_SOLICITOR,
+    SERVICE_MORTGAGE,
+}
+SERVICE_LABELS = {
+    SERVICE_VALUATION: "Valuation",
+    SERVICE_EPC: "EPC",
+    SERVICE_SOLICITOR: "Solicitor",
+    SERVICE_MORTGAGE: "Mortgage",
+}
+SERVICE_ALIASES = {
+    "agent_valuation": SERVICE_VALUATION,
+    "local_agent_valuation": SERVICE_VALUATION,
+    "valuation": SERVICE_VALUATION,
+    "epc": SERVICE_EPC,
+    "epc_booking": SERVICE_EPC,
+    "conveyancing_quote": SERVICE_SOLICITOR,
+    "solicitor": SERVICE_SOLICITOR,
+    "legal": SERVICE_SOLICITOR,
+    "mortgage_advice": SERVICE_MORTGAGE,
+    "mortgage": SERVICE_MORTGAGE,
+}
+REFERRAL_STATUS_NEW = "new"
+REFERRAL_STATUS_REFERRED = "referred"
+REFERRAL_STATUS_IN_PROGRESS = "in progress"
+REFERRAL_STATUS_COMPLETED = "completed"
+REFERRAL_STATUS_DECLINED = "declined"
+VALID_REFERRAL_STATUSES = {
+    REFERRAL_STATUS_NEW,
+    REFERRAL_STATUS_REFERRED,
+    REFERRAL_STATUS_IN_PROGRESS,
+    REFERRAL_STATUS_COMPLETED,
+    REFERRAL_STATUS_DECLINED,
+}
 
 
 # -----------------------
@@ -199,6 +239,23 @@ def init_db():
             created_at TEXT NOT NULL,
             ip_address TEXT,
             FOREIGN KEY (user_id) REFERENCES users (id)
+        );
+
+        CREATE TABLE IF NOT EXISTS service_referrals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lead_id INTEGER NOT NULL,
+            service_type TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'new',
+            assigned_to TEXT,
+            referred_at TEXT,
+            completed_at TEXT,
+            fee_expected INTEGER NOT NULL DEFAULT 0,
+            fee_received INTEGER NOT NULL DEFAULT 0,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT,
+            FOREIGN KEY (lead_id) REFERENCES leads (id),
+            UNIQUE (lead_id, service_type)
         );
 
         CREATE TABLE IF NOT EXISTS bookings (
@@ -395,8 +452,9 @@ def calculate_lead_score(data, marketing_consent=False):
         score += 10
     if data.get("phone"):
         score += 10
-    if data.get("help_requested"):
-        score += min(len(data.get("help_requested") or []) * 10, 30)
+    requested_services = normalise_requested_services(data.get("help_requested"))
+    if requested_services:
+        score += min(len(requested_services) * 10, 30)
     if to_float(data.get("net_proceeds", 0)) > 50000:
         score += 15
     if to_float(data.get("max_budget", 0)) > 300000:
@@ -404,6 +462,60 @@ def calculate_lead_score(data, marketing_consent=False):
     if data.get("plan") == "buy":
         score += 10
     return min(score, 100)
+
+
+def normalise_service_type(service):
+    service_key = (service or "").strip().lower()
+    return SERVICE_ALIASES.get(service_key)
+
+
+def normalise_requested_services(services):
+    cleaned = []
+    if isinstance(services, str):
+        services = [services]
+    for service in services or []:
+        service_type = normalise_service_type(service)
+        if service_type and service_type not in cleaned:
+            cleaned.append(service_type)
+    return cleaned
+
+
+def create_service_referrals(lead_id, services):
+    db = get_db()
+    created = []
+    now = datetime.now().isoformat()
+    for service_type in normalise_requested_services(services):
+        db.execute("""
+            INSERT OR IGNORE INTO service_referrals (
+                lead_id, service_type, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+        """, (
+            lead_id,
+            service_type,
+            REFERRAL_STATUS_NEW,
+            now,
+            now,
+        ))
+        created.append(service_type)
+    return created
+
+
+def get_referrals_for_leads(db, lead_ids):
+    referrals_by_lead = {}
+    if not lead_ids:
+        return referrals_by_lead
+
+    placeholders = ",".join("?" for _ in lead_ids)
+    rows = db.execute(f"""
+        SELECT *
+        FROM service_referrals
+        WHERE lead_id IN ({placeholders})
+        ORDER BY created_at ASC
+    """, tuple(lead_ids)).fetchall()
+
+    for row in rows:
+        referrals_by_lead.setdefault(row["lead_id"], []).append(row)
+    return referrals_by_lead
 
 
 def send_email(to_address, subject, body):
@@ -803,6 +915,23 @@ def agencyhub():
         LIMIT 5
     """, tuple(source_params)).fetchall()
 
+    referral_scope_clause, referral_scope_params = agent_lead_clause("leads")
+    referral_where = ""
+    referral_params = []
+    if referral_scope_clause:
+        referral_where = f"WHERE {referral_scope_clause}"
+        referral_params.extend(referral_scope_params)
+    referral_breakdown = db.execute(f"""
+        SELECT service_referrals.service_type,
+               service_referrals.status,
+               COUNT(*) AS total
+        FROM service_referrals
+        JOIN leads ON leads.id = service_referrals.lead_id
+        {referral_where}
+        GROUP BY service_referrals.service_type, service_referrals.status
+        ORDER BY service_referrals.service_type ASC, service_referrals.status ASC
+    """, tuple(referral_params)).fetchall()
+
     upcoming_jobs = db.execute("""
         SELECT *
         FROM bookings
@@ -918,6 +1047,8 @@ def agencyhub():
         hot_leads=hot_leads,
         tasks_due=tasks_due,
         source_breakdown=source_breakdown,
+        referral_breakdown=referral_breakdown,
+        service_labels=SERVICE_LABELS,
         recent_leads=recent_leads,
         upcoming_jobs=upcoming_jobs,
         overdue_jobs=overdue_jobs,
@@ -996,6 +1127,7 @@ def leads():
     lead_ids = [lead["id"] for lead in leads]
     notes_by_lead = {}
     tasks_by_lead = {}
+    referrals_by_lead = {}
     if lead_ids:
         placeholders = ",".join("?" for _ in lead_ids)
         note_rows = db.execute(f"""
@@ -1015,6 +1147,7 @@ def leads():
         """, tuple(lead_ids)).fetchall()
         for row in task_rows:
             tasks_by_lead.setdefault(row["lead_id"], []).append(row)
+        referrals_by_lead = get_referrals_for_leads(db, lead_ids)
 
     total_leads = count_scoped_leads(db)
     new_leads = count_scoped_leads(db, "status = ?", (LEAD_STATUS_NEW,))
@@ -1042,6 +1175,9 @@ def leads():
         hot_leads=hot_leads,
         notes_by_lead=notes_by_lead,
         tasks_by_lead=tasks_by_lead,
+        referrals_by_lead=referrals_by_lead,
+        service_labels=SERVICE_LABELS,
+        referral_statuses=list(VALID_REFERRAL_STATUSES),
         csrf_token=get_csrf_token()
     )
 @app.route("/leads/mark-contacted/<int:lead_id>", methods=["POST"])
@@ -1207,6 +1343,80 @@ def add_note_to_lead(lead_id):
     return redirect("/leads")
 
 
+@app.route("/referrals/update/<int:referral_id>", methods=["POST"])
+@login_required
+@role_required(ROLE_AGENT)
+def update_referral(referral_id):
+    validate_csrf()
+    status = (request.form.get("status") or "").strip().lower()
+    assigned_to = (request.form.get("assigned_to") or "").strip()
+    notes = (request.form.get("notes") or "").strip()
+    fee_expected = validate_int(
+        request.form.get("fee_expected") or 0,
+        "expected fee",
+        min_value=0,
+        max_value=1000000,
+    )
+    fee_received = validate_int(
+        request.form.get("fee_received") or 0,
+        "received fee",
+        min_value=0,
+        max_value=1000000,
+    )
+
+    if status not in VALID_REFERRAL_STATUSES:
+        abort(400, "Invalid referral status")
+
+    db = get_db()
+    referral = db.execute("""
+        SELECT service_referrals.*, leads.id AS lead_id
+        FROM service_referrals
+        JOIN leads ON leads.id = service_referrals.lead_id
+        WHERE service_referrals.id = ?
+    """, (referral_id,)).fetchone()
+
+    if referral is None:
+        abort(404, "Referral not found")
+
+    referred_at = referral["referred_at"]
+    completed_at = referral["completed_at"]
+    now = datetime.now().isoformat()
+    if status in {REFERRAL_STATUS_REFERRED, REFERRAL_STATUS_IN_PROGRESS} and not referred_at:
+        referred_at = now
+    if status == REFERRAL_STATUS_COMPLETED and not completed_at:
+        completed_at = now
+
+    db.execute("""
+        UPDATE service_referrals
+        SET status = ?,
+            assigned_to = ?,
+            referred_at = ?,
+            completed_at = ?,
+            fee_expected = ?,
+            fee_received = ?,
+            notes = ?,
+            updated_at = ?
+        WHERE id = ?
+    """, (
+        status,
+        assigned_to,
+        referred_at,
+        completed_at,
+        fee_expected,
+        fee_received,
+        notes,
+        now,
+        referral_id,
+    ))
+    add_lead_note(
+        referral["lead_id"],
+        f"{SERVICE_LABELS.get(referral['service_type'], referral['service_type'])} referral updated to {status}."
+    )
+    db.commit()
+    write_audit_log("updated_referral", "service_referral", referral_id)
+    return redirect("/leads")
+
+
 @app.route("/leads/tasks/complete/<int:task_id>", methods=["POST"])
 @login_required
 @role_required(ROLE_AGENT)
@@ -1241,7 +1451,12 @@ def export_leads_csv():
     rows = db.execute(f"""
         SELECT id, name, email, phone, address, valuation, source, utm_source,
                utm_medium, utm_campaign, status, lead_stage, lead_score,
-               marketing_consent, created_at, next_follow_up_at, retention_until
+               marketing_consent, created_at, next_follow_up_at, retention_until,
+               (
+                   SELECT GROUP_CONCAT(service_type || ':' || status, '; ')
+                   FROM service_referrals
+                   WHERE service_referrals.lead_id = leads.id
+               ) AS referrals
         FROM leads
         {where_sql}
         ORDER BY id DESC
@@ -1253,7 +1468,7 @@ def export_leads_csv():
         "id", "name", "email", "phone", "address", "valuation", "source",
         "utm_source", "utm_medium", "utm_campaign", "status", "lead_stage",
         "lead_score", "marketing_consent", "created_at", "next_follow_up_at",
-        "retention_until",
+        "retention_until", "referrals",
     ])
     for row in rows:
         writer.writerow([row[key] for key in row.keys()])
@@ -1883,6 +2098,13 @@ def save_lead_payload(data, create_report=False):
             due_at=(datetime.now() + timedelta(days=1)).isoformat(),
             user_id=assigned_agent_id,
         )
+        created_referrals = create_service_referrals(lead_id, data.get("help_requested"))
+        if created_referrals:
+            add_lead_note(
+                lead_id,
+                "Requested services: " + ", ".join(SERVICE_LABELS.get(service, service) for service in created_referrals),
+                user_id=assigned_agent_id,
+            )
         db.commit()
         write_audit_log("created", "lead", lead_id)
 

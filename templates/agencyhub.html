@@ -451,6 +451,21 @@
                     {% endif %}
                 </div>
             </div>
+            <div class="panel">
+                <h3>Service Pipeline</h3>
+                <div class="list">
+                    {% if referral_breakdown %}
+                        {% for referral in referral_breakdown %}
+                        <div class="list-item">
+                            <strong>{{ service_labels.get(referral["service_type"], referral["service_type"]) }}</strong>
+                            <div class="meta">{{ referral["status"]|title }} · {{ referral["total"] }} referral(s)</div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="empty">No service referrals yet.</div>
+                    {% endif %}
+                </div>
+            </div>
         </div>
 
         <div class="grid three-col">

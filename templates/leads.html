@@ -677,6 +677,7 @@
                                 <th>Value</th>
                                 <th>Source</th>
                                 <th>Status</th>
+                                <th>Services</th>
                                 <th>Dates</th>
                                 <th>Data</th>
                                 <th>Notes</th>
@@ -721,6 +722,56 @@
                                         <span class="badge badge-qualified">Qualified</span>
                                     {% else %}
                                         <span class="badge badge-lost">{{ lead["status"]|title }}</span>
+                                    {% endif %}
+                                </td>
+
+                                <td>
+                                    {% set referrals = referrals_by_lead.get(lead["id"], []) %}
+                                    {% if referrals %}
+                                        {% for referral in referrals %}
+                                            <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #eef2f7;">
+                                                <div><strong>{{ service_labels.get(referral["service_type"], referral["service_type"]) }}</strong></div>
+                                                <div class="date-text">{{ referral["status"]|title }}</div>
+                                                {% if referral["assigned_to"] %}
+                                                    <div class="date-text">To: {{ referral["assigned_to"] }}</div>
+                                                {% endif %}
+                                                {% if referral["fee_expected"] or referral["fee_received"] %}
+                                                    <div class="date-text">Fee: £{{ referral["fee_received"] }} / £{{ referral["fee_expected"] }}</div>
+                                                {% endif %}
+                                                {% if session.role == "agent" %}
+                                                <form method="POST" action="/referrals/update/{{ referral['id'] }}" class="mini-form" style="margin-top:8px;">
+                                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                                    <div class="field">
+                                                        <label>Status</label>
+                                                        <select name="status">
+                                                            {% for s in referral_statuses %}
+                                                                <option value="{{ s }}" {% if referral["status"] == s %}selected{% endif %}>{{ s|title }}</option>
+                                                            {% endfor %}
+                                                        </select>
+                                                    </div>
+                                                    <div class="field">
+                                                        <label>Assigned to</label>
+                                                        <input name="assigned_to" value="{{ referral['assigned_to'] or '' }}" placeholder="Partner or contact">
+                                                    </div>
+                                                    <div class="field">
+                                                        <label>Expected fee</label>
+                                                        <input name="fee_expected" type="number" value="{{ referral['fee_expected'] or 0 }}">
+                                                    </div>
+                                                    <div class="field">
+                                                        <label>Received fee</label>
+                                                        <input name="fee_received" type="number" value="{{ referral['fee_received'] or 0 }}">
+                                                    </div>
+                                                    <div class="field">
+                                                        <label>Notes</label>
+                                                        <textarea name="notes" placeholder="Referral notes">{{ referral["notes"] or "" }}</textarea>
+                                                    </div>
+                                                    <button type="submit" class="btn-secondary">Update referral</button>
+                                                </form>
+                                                {% endif %}
+                                            </div>
+                                        {% endfor %}
+                                    {% else %}
+                                        <div class="date-text">No services requested</div>
                                     {% endif %}
                                 </td>
 
