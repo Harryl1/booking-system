@@ -213,7 +213,7 @@
 
         .filter-grid {
             display: grid;
-            grid-template-columns: 2fr 1fr 1fr auto;
+            grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(140px, 1fr)) auto;
             gap: 12px;
             align-items: end;
         }
@@ -363,8 +363,13 @@
         }
 
         .badge-source {
-            background: #f3e8ff;
-            color: #7e22ce;
+            background: #eaf4f8;
+            color: var(--secondary);
+        }
+
+        .badge-hot {
+            background: #fff7e6;
+            color: #a86718;
         }
 
         .date-text,
@@ -527,7 +532,10 @@
             <div class="top-actions">
                 <a href="/leads?status=new" class="btn btn-secondary">New leads</a>
                 <a href="/leads?status=contacted" class="btn btn-secondary">Follow-up</a>
+                <a href="/leads?priority=hot" class="btn btn-secondary">Hot leads</a>
+                <a href="/leads?priority=due" class="btn btn-secondary">Tasks due</a>
                 <a href="/leads?status=valuation booked" class="btn btn-secondary">Booked valuations</a>
+                <a href="/leads/export.csv" class="btn btn-secondary">Export CSV</a>
 
                 {% if session.role == "agent" %}
                 <form method="POST" action="/leads/add-test" style="margin:0;">
@@ -561,6 +569,12 @@
                 <div class="label">Valuations booked</div>
                 <div class="value">{{ valuation_booked_leads }}</div>
                 <div class="sub">Core conversion metric</div>
+            </div>
+
+            <div class="panel kpi-card">
+                <div class="label">Hot leads</div>
+                <div class="value">{{ hot_leads }}</div>
+                <div class="sub">Score 60+ or hand-raise</div>
             </div>
 
             <div class="panel kpi-card">
@@ -608,12 +622,22 @@
                                 <label for="source">Source</label>
                                 <select id="source" name="source">
                                     <option value="all" {% if source_filter == "all" %}selected{% endif %}>All sources</option>
+                                    <option value="property_tool" {% if source_filter == "property_tool" %}selected{% endif %}>Property tool</option>
                                     <option value="website" {% if source_filter == "website" %}selected{% endif %}>Website</option>
                                     <option value="facebook" {% if source_filter == "facebook" %}selected{% endif %}>Facebook</option>
                                     <option value="manual" {% if source_filter == "manual" %}selected{% endif %}>Manual</option>
                                 </select>
                             </div>
                             {% endif %}
+
+                            <div class="field">
+                                <label for="priority">Priority</label>
+                                <select id="priority" name="priority">
+                                    <option value="all" {% if priority_filter == "all" %}selected{% endif %}>All priorities</option>
+                                    <option value="hot" {% if priority_filter == "hot" %}selected{% endif %}>Hot leads</option>
+                                    <option value="due" {% if priority_filter == "due" %}selected{% endif %}>Tasks due</option>
+                                </select>
+                            </div>
 
                             <div class="field">
                                 <label>&nbsp;</label>
@@ -627,7 +651,10 @@
                         <a class="chip" href="/leads?status=new">New</a>
                         <a class="chip" href="/leads?status=contacted">Contacted</a>
                         <a class="chip" href="/leads?status=valuation booked">Valuation booked</a>
+                        <a class="chip" href="/leads?priority=hot">Hot</a>
+                        <a class="chip" href="/leads?priority=due">Due today</a>
                         {% if source_filter is defined %}
+                        <a class="chip" href="/leads?source=property_tool">Property tool</a>
                         <a class="chip" href="/leads?source=website">Website leads</a>
                         <a class="chip" href="/leads?source=facebook">Facebook leads</a>
                         {% endif %}
@@ -665,6 +692,10 @@
                                     <div class="lead-meta">
                                         <a class="phone-link" href="tel:{{ lead['phone'] }}">{{ lead["phone"] }}</a><br>
                                         <a class="email-link" href="mailto:{{ lead['email'] }}">{{ lead["email"] }}</a>
+                                        <br>Score: {{ lead["lead_score"] or 0 }}/100
+                                        {% if lead["is_hot_lead"] or lead["lead_score"] >= 60 %}
+                                            <br><span class="badge badge-hot">Hot</span>
+                                        {% endif %}
                                     </div>
                                 </td>
 
@@ -674,6 +705,9 @@
 
                                 <td>
                                     <span class="badge badge-source">{{ lead["source"]|title }}</span>
+                                    {% if lead["utm_campaign"] %}
+                                        <div class="date-text">{{ lead["utm_campaign"] }}</div>
+                                    {% endif %}
                                 </td>
 
                                 <td>
@@ -694,6 +728,7 @@
                                     <div class="date-text"><strong>Created:</strong> {{ lead["created_at"] or "-" }}</div>
                                     <div class="date-text"><strong>Contacted:</strong> {{ lead["contacted_at"] or "-" }}</div>
                                     <div class="date-text"><strong>Booked:</strong> {{ lead["valuation_booked_at"] or "-" }}</div>
+                                    <div class="date-text"><strong>Next:</strong> {{ lead["next_follow_up_at"] or "-" }}</div>
                                 </td>
 
                                 <td>
@@ -706,7 +741,35 @@
                                     {% endif %}
                                 </td>
 
-                                <td class="notes-cell">{{ lead["notes"] or "-" }}</td>
+                                <td class="notes-cell">
+                                    {{ lead["notes"] or "-" }}
+                                    {% set lead_notes = notes_by_lead.get(lead["id"], []) %}
+                                    {% if lead_notes %}
+                                        <div style="margin-top:8px;">
+                                            <strong>History</strong>
+                                            {% for note in lead_notes[:3] %}
+                                                <div class="date-text">{{ note["created_at"] }}: {{ note["note"] }}</div>
+                                            {% endfor %}
+                                        </div>
+                                    {% endif %}
+                                    {% set lead_tasks = tasks_by_lead.get(lead["id"], []) %}
+                                    {% if lead_tasks %}
+                                        <div style="margin-top:8px;">
+                                            <strong>Tasks</strong>
+                                            {% for task in lead_tasks[:2] %}
+                                                <div class="date-text">
+                                                    {{ task["title"] }} · {{ task["due_at"] }}
+                                                    {% if not task["completed_at"] and session.role == "agent" %}
+                                                        <form method="POST" action="/leads/tasks/complete/{{ task['id'] }}" style="display:inline;">
+                                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                                            <button type="submit" class="text-link" style="border:none;background:transparent;padding:0;cursor:pointer;">Done</button>
+                                                        </form>
+                                                    {% endif %}
+                                                </div>
+                                            {% endfor %}
+                                        </div>
+                                    {% endif %}
+                                </td>
 
                                 {% if session.role == "agent" %}
                                 <td>
@@ -742,6 +805,30 @@
                                             <button type="submit" class="btn-booked">Book valuation</button>
                                         </form>
                                         {% endif %}
+
+                                        <form method="POST" action="/leads/add-note/{{ lead['id'] }}" class="mini-form">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                            <h4>Add note</h4>
+                                            <div class="field">
+                                                <label>Note</label>
+                                                <textarea name="note" placeholder="Add a follow-up note"></textarea>
+                                            </div>
+                                            <button type="submit" class="btn-secondary">Save note</button>
+                                        </form>
+
+                                        <form method="POST" action="/leads/update-status/{{ lead['id'] }}" class="mini-form">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                            <h4>Status</h4>
+                                            <div class="field">
+                                                <label>Move to</label>
+                                                <select name="status">
+                                                    {% for s in lead_statuses %}
+                                                        <option value="{{ s }}" {% if lead["status"] == s %}selected{% endif %}>{{ s|title }}</option>
+                                                    {% endfor %}
+                                                </select>
+                                            </div>
+                                            <button type="submit" class="btn-secondary">Update status</button>
+                                        </form>
                                     </div>
                                 </td>
                                 {% endif %}

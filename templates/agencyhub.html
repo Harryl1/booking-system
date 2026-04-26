@@ -320,6 +320,7 @@
             </div>
             <div class="quick-links">
                 <a href="/leads">View Leads</a>
+                <a href="/leads?priority=hot">Hot Leads</a>
                 <a href="/epc">Open EPCHub</a>
             </div>
         </div>
@@ -336,6 +337,14 @@
             <div class="panel kpi-card">
                 <h4>Qualified Leads</h4>
                 <p>{{ qualified_leads }}</p>
+            </div>
+            <div class="panel kpi-card">
+                <h4>Hot Leads</h4>
+                <p>{{ hot_leads }}</p>
+            </div>
+            <div class="panel kpi-card">
+                <h4>Tasks Due</h4>
+                <p>{{ tasks_due }}</p>
             </div>
             <div class="panel kpi-card">
                 <h4>EPC Required</h4>
@@ -356,6 +365,10 @@
             <div class="panel kpi-card">
                 <h4>Lead Conversion</h4>
                 <p>{{ lead_conversion_rate }}%</p>
+            </div>
+            <div class="panel kpi-card">
+                <h4>Won Leads</h4>
+                <p>{{ won_leads }}</p>
             </div>
         </div>
 
@@ -423,6 +436,21 @@
                     </div>
                 </div>
             </div>
+            <div class="panel">
+                <h3>Lead Sources</h3>
+                <div class="list">
+                    {% if source_breakdown %}
+                        {% for source in source_breakdown %}
+                        <div class="list-item">
+                            <strong>{{ source["source"]|title }}</strong>
+                            <div class="meta">{{ source["total"] }} lead(s)</div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="empty">No source data yet.</div>
+                    {% endif %}
+                </div>
+            </div>
         </div>
 
         <div class="grid three-col">
@@ -445,6 +473,7 @@
                                 </span>
                                 <div class="meta">{{ lead["address"] }}</div>
                                 <div class="meta">{{ lead["email"] }} · {{ lead["phone"] }}</div>
+                                <div class="meta">Score: {{ lead["lead_score"] or 0 }}/100</div>
                             </div>
                         {% endfor %}
                     </div>
