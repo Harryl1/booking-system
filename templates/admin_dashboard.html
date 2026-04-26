@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - equiome</title>
+    <style>
+        * { box-sizing:border-box; }
+        :root { --bg:#f4f7f8; --panel:#fff; --border:#d7dee7; --text:#243342; --muted:#5b6573; --brand:#12344d; --brand2:#2a7f9e; --radius:8px; }
+        body { margin:0; font-family:Arial,sans-serif; background:var(--bg); color:var(--text); }
+        .layout { display:flex; min-height:100vh; }
+        .sidebar { width:240px; background:var(--brand); color:#fff; padding:24px 18px; }
+        .sidebar h2 { margin:0 0 24px; text-transform:lowercase; }
+        .sidebar a { display:block; color:#fff; text-decoration:none; padding:10px 12px; border-radius:var(--radius); margin-bottom:8px; }
+        .sidebar a:hover,.sidebar a.active { background:#194967; }
+        .main { flex:1; padding:24px; }
+        .panel,.topbar { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:18px; margin-bottom:18px; }
+        h1,h2,h3 { margin-top:0; color:var(--brand); }
+        .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; }
+        .metric { font-size:30px; font-weight:bold; }
+        .muted { color:var(--muted); font-size:13px; }
+        table { width:100%; border-collapse:collapse; }
+        th,td { text-align:left; padding:10px; border-bottom:1px solid var(--border); }
+        th { color:var(--muted); font-size:12px; }
+        @media (max-width:800px) { .layout{display:block;} .sidebar{width:auto;} }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <h2>equiome</h2>
+        <a href="/">Dashboard</a>
+        <a href="/leads">Leads</a>
+        <a href="/referrals">Referrals</a>
+        <a href="/tasks">Tasks</a>
+        <a href="/admin" class="active">Admin</a>
+        <a href="/billing">Billing</a>
+        <a href="/settings/email">Email</a>
+        <a href="/admin/system">System</a>
+        <a href="/logout">Logout</a>
+    </aside>
+    <main class="main">
+        <div class="topbar">
+            <h1>Admin Dashboard</h1>
+            <div class="muted">Commercial and operational overview.</div>
+        </div>
+
+        <div class="grid">
+            <div class="panel"><div class="muted">Total leads</div><div class="metric">{{ totals["leads"] }}</div></div>
+            <div class="panel"><div class="muted">Hot leads</div><div class="metric">{{ totals["hot_leads"] }}</div></div>
+            <div class="panel"><div class="muted">Reports generated</div><div class="metric">{{ totals["reports"] }}</div></div>
+            <div class="panel"><div class="muted">Tasks due</div><div class="metric">{{ tasks_due }}</div></div>
+        </div>
+
+        <div class="grid">
+            <div class="panel">
+                <h3>Referral Pipeline</h3>
+                <table>
+                    <tr><th>Service</th><th>Status</th><th>Total</th><th>Expected</th><th>Received</th></tr>
+                    {% for row in referral_rows %}
+                    <tr>
+                        <td>{{ service_labels.get(row["service_type"], row["service_type"]) }}</td>
+                        <td>{{ row["status"]|title }}</td>
+                        <td>{{ row["total"] }}</td>
+                        <td>£{{ row["expected"] }}</td>
+                        <td>£{{ row["received"] }}</td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+            <div class="panel">
+                <h3>Lead Sources</h3>
+                <table>
+                    <tr><th>Source</th><th>Total</th></tr>
+                    {% for row in source_rows %}
+                    <tr><td>{{ row["source"]|title }}</td><td>{{ row["total"] }}</td></tr>
+                    {% endfor %}
+                </table>
+            </div>
+        </div>
+
+        {% if organisations %}
+        <div class="panel">
+            <h3>Organisations</h3>
+            <table>
+                <tr><th>Name</th><th>Plan</th><th>Billing</th><th>Leads</th></tr>
+                {% for org in organisations %}
+                <tr>
+                    <td>{{ org["name"] }}</td>
+                    <td>{{ org["subscription_plan"]|title }}</td>
+                    <td>{{ org["billing_status"]|title }}</td>
+                    <td>{{ org["lead_count"] }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+        </div>
+        {% endif %}
+    </main>
+</div>
+</body>
+</html>

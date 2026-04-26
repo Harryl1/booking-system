@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System - equiome</title>
+    <style>
+        * { box-sizing:border-box; }
+        :root { --bg:#f4f7f8; --panel:#fff; --border:#d7dee7; --text:#243342; --muted:#5b6573; --brand:#12344d; --ok:#287a55; --bad:#a33b3b; --radius:8px; }
+        body { margin:0; font-family:Arial,sans-serif; background:var(--bg); color:var(--text); }
+        .layout { display:flex; min-height:100vh; }
+        .sidebar { width:240px; background:var(--brand); color:#fff; padding:24px 18px; }
+        .sidebar h2 { margin:0 0 24px; text-transform:lowercase; }
+        .sidebar a { display:block; color:#fff; text-decoration:none; padding:10px 12px; border-radius:var(--radius); margin-bottom:8px; }
+        .main { flex:1; padding:24px; }
+        .panel { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:18px; margin-bottom:18px; }
+        h1,h2,h3 { margin-top:0; color:var(--brand); }
+        table { width:100%; border-collapse:collapse; }
+        th,td { text-align:left; padding:12px; border-bottom:1px solid var(--border); }
+        .ok { color:var(--ok); font-weight:bold; }
+        .bad { color:var(--bad); font-weight:bold; }
+        @media (max-width:800px) { .layout{display:block;} .sidebar{width:auto;} }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <h2>equiome</h2>
+        <a href="/admin">Admin</a>
+        <a href="/billing">Billing</a>
+        <a href="/settings/email">Email</a>
+        <a href="/admin/system">System</a>
+        <a href="/leads">Leads</a>
+        <a href="/logout">Logout</a>
+    </aside>
+    <main class="main">
+        <div class="panel">
+            <h1>System Readiness</h1>
+            <table>
+                <tr><th>Check</th><th>Status</th></tr>
+                {% for label, passed in checks %}
+                <tr>
+                    <td>{{ label }}</td>
+                    <td class="{{ 'ok' if passed else 'bad' }}">{{ "OK" if passed else "Needs attention" }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+        </div>
+    </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Billing - equiome</title>
+    <style>
+        * { box-sizing:border-box; }
+        :root { --bg:#f4f7f8; --panel:#fff; --border:#d7dee7; --text:#243342; --muted:#5b6573; --brand:#12344d; --radius:8px; }
+        body { margin:0; font-family:Arial,sans-serif; background:var(--bg); color:var(--text); }
+        .layout { display:flex; min-height:100vh; }
+        .sidebar { width:240px; background:var(--brand); color:#fff; padding:24px 18px; }
+        .sidebar h2 { margin:0 0 24px; text-transform:lowercase; }
+        .sidebar a { display:block; color:#fff; text-decoration:none; padding:10px 12px; border-radius:var(--radius); margin-bottom:8px; }
+        .sidebar a:hover,.sidebar a.active { background:#194967; }
+        .main { flex:1; padding:24px; }
+        .panel { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:18px; margin-bottom:18px; }
+        h1,h2,h3 { margin-top:0; color:var(--brand); }
+        .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; }
+        .metric { font-size:30px; font-weight:bold; }
+        .muted { color:var(--muted); font-size:13px; }
+        @media (max-width:800px) { .layout{display:block;} .sidebar{width:auto;} }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <h2>equiome</h2>
+        <a href="/admin">Admin</a>
+        <a href="/billing" class="active">Billing</a>
+        <a href="/settings/organisation">Organisation</a>
+        <a href="/leads">Leads</a>
+        <a href="/logout">Logout</a>
+    </aside>
+    <main class="main">
+        <div class="panel">
+            <h1>Billing</h1>
+            <p class="muted">Stripe automation can sit behind this later. For now this gives you sellable subscription state and plan visibility.</p>
+        </div>
+        <div class="grid">
+            <div class="panel"><div class="muted">Plan</div><div class="metric">{{ organisation["subscription_plan"]|title }}</div></div>
+            <div class="panel"><div class="muted">Billing status</div><div class="metric">{{ organisation["billing_status"]|title }}</div></div>
+            <div class="panel"><div class="muted">Lead allowance</div><div class="metric">{{ organisation["lead_allowance"] }}</div></div>
+            <div class="panel"><div class="muted">Current leads</div><div class="metric">{{ lead_count }}</div></div>
+        </div>
+        <div class="grid">
+            <div class="panel"><div class="muted">Expected referral fees</div><div class="metric">£{{ referral_fees["expected"] }}</div></div>
+            <div class="panel"><div class="muted">Received referral fees</div><div class="metric">£{{ referral_fees["received"] }}</div></div>
+            <div class="panel"><div class="muted">Trial ends</div><div class="metric">{{ organisation["trial_ends_at"] or "-" }}</div></div>
+        </div>
+    </main>
+</div>
+</body>
+</html>

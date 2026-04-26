@@ -69,6 +69,7 @@ def add_api_cors_headers(response):
 
 ROLE_AGENT = "agent"
 ROLE_ASSESSOR = "assessor"
+ROLE_PLATFORM_ADMIN = "platform_admin"
 
 STATUS_NEW = "new"
 STATUS_ASSIGNED = "assigned"
@@ -93,7 +94,7 @@ VALID_LEAD_STATUSES = {
     LEAD_STATUS_WON,
     LEAD_STATUS_LOST,
 }
-VALID_ROLES = {ROLE_AGENT, ROLE_ASSESSOR}
+VALID_ROLES = {ROLE_AGENT, ROLE_ASSESSOR, ROLE_PLATFORM_ADMIN}
 VALID_BOOKING_STATUSES = {STATUS_NEW, STATUS_ASSIGNED, STATUS_COMPLETED}
 VALID_LEAD_STATUSES = {
     LEAD_STATUS_NEW,
@@ -405,6 +406,21 @@ def role_required(role):
             return view_func(*args, **kwargs)
         return wrapper
     return decorator
+
+
+def admin_or_agent_required(view_func):
+    @wraps(view_func)
+    def wrapper(*args, **kwargs):
+        if "user_id" not in session:
+            return redirect("/login")
+        if session.get("role") not in {ROLE_AGENT, ROLE_PLATFORM_ADMIN}:
+            abort(403)
+        return view_func(*args, **kwargs)
+    return wrapper
+
+
+def is_platform_admin():
+    return session.get("role") == ROLE_PLATFORM_ADMIN
 
 
 # -----------------------
@@ -868,6 +884,12 @@ def scoped_lead_where(extra_clause="", extra_params=()):
     if not clauses:
         return "", []
     return " WHERE " + " AND ".join(clauses), params
+
+
+def admin_scope_clause(alias="leads"):
+    if is_platform_admin():
+        return "", []
+    return agent_lead_clause(alias)
 
 
 def count_scoped_leads(db, extra_clause="", extra_params=()):
@@ -1816,6 +1838,163 @@ def organisation_settings():
         users=users,
         lead_count=lead_count,
         csrf_token=get_csrf_token(),
+    )
+
+
+@app.get("/admin")
+@login_required
+@admin_or_agent_required
+def admin_dashboard():
+    db = get_db()
+    today = datetime.now().date().isoformat()
+    lead_scope, lead_params = admin_scope_clause("leads")
+    lead_where = f"WHERE {lead_scope}" if lead_scope else ""
+
+    totals = {
+        "leads": db.execute(
+            f"SELECT COUNT(*) FROM leads {lead_where}",
+            tuple(lead_params)
+        ).fetchone()[0],
+        "hot_leads": db.execute(
+            f"SELECT COUNT(*) FROM leads {lead_where + (' AND ' if lead_where else 'WHERE ')}(is_hot_lead = 1 OR lead_score >= 60)",
+            tuple(lead_params)
+        ).fetchone()[0],
+        "reports": db.execute(
+            f"SELECT COUNT(*) FROM leads {lead_where + (' AND ' if lead_where else 'WHERE ')}report_token IS NOT NULL",
+            tuple(lead_params)
+        ).fetchone()[0],
+    }
+
+    referral_scope, referral_params = admin_scope_clause("leads")
+    referral_where = f"WHERE {referral_scope}" if referral_scope else ""
+    referral_rows = db.execute(f"""
+        SELECT service_referrals.service_type,
+               service_referrals.status,
+               COUNT(*) AS total,
+               COALESCE(SUM(service_referrals.fee_expected), 0) AS expected,
+               COALESCE(SUM(service_referrals.fee_received), 0) AS received
+        FROM service_referrals
+        JOIN leads ON leads.id = service_referrals.lead_id
+        {referral_where}
+        GROUP BY service_referrals.service_type, service_referrals.status
+        ORDER BY service_referrals.service_type, service_referrals.status
+    """, tuple(referral_params)).fetchall()
+
+    source_rows = db.execute(f"""
+        SELECT source, COUNT(*) AS total
+        FROM leads
+        {lead_where}
+        GROUP BY source
+        ORDER BY total DESC
+        LIMIT 10
+    """, tuple(lead_params)).fetchall()
+
+    task_scope, task_params = admin_scope_clause("leads")
+    task_where = "lead_tasks.completed_at IS NULL AND date(lead_tasks.due_at) <= date(?)"
+    task_query_params = [today]
+    if task_scope:
+        task_where += f" AND {task_scope}"
+        task_query_params.extend(task_params)
+    tasks_due = db.execute(f"""
+        SELECT COUNT(*)
+        FROM lead_tasks
+        JOIN leads ON leads.id = lead_tasks.lead_id
+        WHERE {task_where}
+    """, tuple(task_query_params)).fetchone()[0]
+
+    organisations = []
+    if is_platform_admin():
+        organisations = db.execute("""
+            SELECT organisations.*,
+                   COUNT(leads.id) AS lead_count
+            FROM organisations
+            LEFT JOIN leads ON leads.organisation_id = organisations.id
+            GROUP BY organisations.id
+            ORDER BY organisations.name ASC
+        """).fetchall()
+
+    return render_template(
+        "admin_dashboard.html",
+        totals=totals,
+        referral_rows=referral_rows,
+        source_rows=source_rows,
+        tasks_due=tasks_due,
+        organisations=organisations,
+        service_labels=SERVICE_LABELS,
+    )
+
+
+@app.route("/settings/email", methods=["GET", "POST"])
+@login_required
+@admin_or_agent_required
+def email_settings():
+    message = ""
+    if request.method == "POST":
+        validate_csrf()
+        test_to = validate_required_text(request.form.get("test_to"), "test email", max_length=255)
+        try:
+            sent = send_email(
+                test_to,
+                "Equiome email test",
+                "This is a test email from your Equiome booking system."
+            )
+            message = "Test email sent." if sent else "SMTP is not configured yet."
+        except Exception as error:
+            message = f"Email failed: {error}"
+
+    return render_template(
+        "email_settings.html",
+        smtp_configured=bool(SMTP_HOST and CUSTOMER_EMAIL_FROM),
+        smtp_host=SMTP_HOST,
+        customer_email_from=CUSTOMER_EMAIL_FROM,
+        lead_notification_email=LEAD_NOTIFICATION_EMAIL,
+        message=message,
+        csrf_token=get_csrf_token(),
+    )
+
+
+@app.get("/admin/system")
+@login_required
+@admin_or_agent_required
+def system_readiness():
+    checks = [
+        ("SECRET_KEY set", bool(os.environ.get("SECRET_KEY"))),
+        ("INTERNAL_API_TOKEN set", bool(INTERNAL_API_TOKEN)),
+        ("SESSION_COOKIE_SECURE enabled", app.config["SESSION_COOKIE_SECURE"]),
+        ("FRONTEND_ORIGIN restricted", FRONTEND_ORIGIN != "*"),
+        ("SMTP configured", bool(SMTP_HOST and CUSTOMER_EMAIL_FROM)),
+        ("Using managed database", bool(os.environ.get("DATABASE_URL"))),
+    ]
+    return render_template("system_readiness.html", checks=checks)
+
+
+@app.get("/billing")
+@login_required
+@admin_or_agent_required
+def billing():
+    db = get_db()
+    organisation_id = current_organisation_id() or default_organisation_id(db)
+    organisation = db.execute(
+        "SELECT * FROM organisations WHERE id = ?",
+        (organisation_id,)
+    ).fetchone()
+    lead_count = db.execute(
+        "SELECT COUNT(*) FROM leads WHERE organisation_id = ?",
+        (organisation_id,)
+    ).fetchone()[0]
+    referral_fees = db.execute("""
+        SELECT COALESCE(SUM(fee_expected), 0) AS expected,
+               COALESCE(SUM(fee_received), 0) AS received
+        FROM service_referrals
+        JOIN leads ON leads.id = service_referrals.lead_id
+        WHERE leads.organisation_id = ?
+    """, (organisation_id,)).fetchone()
+
+    return render_template(
+        "billing.html",
+        organisation=organisation,
+        lead_count=lead_count,
+        referral_fees=referral_fees,
     )
 
 
