@@ -36,8 +36,18 @@ DB_PATH = os.environ.get("DB_PATH", os.path.join(BASE_DIR, "bookings.db"))
 INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN", "")
 REPORT_RETENTION_DAYS = int(os.environ.get("REPORT_RETENTION_DAYS", "30"))
 LEAD_RETENTION_DAYS = int(os.environ.get("LEAD_RETENTION_DAYS", "365"))
+FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "*")
 
 os.makedirs(REPORTS_DIR, exist_ok=True)
+
+
+@app.after_request
+def add_api_cors_headers(response):
+    if request.path.startswith("/api/property/"):
+        response.headers["Access-Control-Allow-Origin"] = FRONTEND_ORIGIN
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    return response
 
 ROLE_AGENT = "agent"
 ROLE_ASSESSOR = "assessor"
