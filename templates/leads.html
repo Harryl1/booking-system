@@ -3,28 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Leads - AgencyHub</title>
+    <title>Leads - equiome</title>
     <style>
         * {
             box-sizing: border-box;
         }
 
         :root {
-            --bg: #f6f9fc;
+            --bg: #f4f7f8;
             --panel: #ffffff;
-            --border: #e5e7eb;
-            --text: #1f2937;
-            --muted: #6b7280;
-            --sidebar: #111827;
-            --sidebar-hover: #1f2937;
-            --primary: #ff7a59;
-            --primary-dark: #e76545;
-            --secondary: #2563eb;
-            --success: #15803d;
-            --warning: #b45309;
-            --danger: #b91c1c;
-            --shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
-            --radius: 14px;
+            --border: #d7dee7;
+            --text: #243342;
+            --muted: #5b6573;
+            --sidebar: #12344d;
+            --sidebar-hover: #194967;
+            --primary: #2a7f9e;
+            --primary-dark: #216982;
+            --secondary: #12344d;
+            --success: #287a55;
+            --warning: #a86718;
+            --danger: #a33b3b;
+            --shadow: 0 8px 24px rgba(18, 52, 77, 0.08);
+            --radius: 8px;
         }
 
         body {
@@ -47,8 +47,10 @@
         }
 
         .brand {
-            font-size: 24px;
+            font-size: 22px;
             font-weight: bold;
+            letter-spacing: 0;
+            text-transform: lowercase;
             margin-bottom: 28px;
         }
 
@@ -57,7 +59,7 @@
             color: white;
             text-decoration: none;
             padding: 11px 12px;
-            border-radius: 10px;
+            border-radius: 8px;
             margin-bottom: 8px;
             font-size: 15px;
         }
@@ -101,7 +103,7 @@
         .btn,
         button {
             border: none;
-            border-radius: 10px;
+            border-radius: 8px;
             padding: 10px 14px;
             font-size: 14px;
             cursor: pointer;
@@ -233,7 +235,7 @@
         textarea {
             width: 100%;
             border: 1px solid var(--border);
-            border-radius: 10px;
+            border-radius: 8px;
             padding: 10px 12px;
             font-size: 14px;
             background: white;
@@ -508,7 +510,7 @@
 <body>
 <div class="layout">
     <aside class="sidebar">
-        <div class="brand">AgencyHub</div>
+        <div class="brand">equiome</div>
         <a href="/">Dashboard</a>
         <a href="/leads" class="active">Leads</a>
         <a href="/epc">EPCHub</a>
@@ -649,6 +651,7 @@
                                 <th>Source</th>
                                 <th>Status</th>
                                 <th>Dates</th>
+                                <th>Data</th>
                                 <th>Notes</th>
                                 {% if session.role == "agent" %}
                                 <th>Actions</th>
@@ -691,6 +694,16 @@
                                     <div class="date-text"><strong>Created:</strong> {{ lead["created_at"] or "-" }}</div>
                                     <div class="date-text"><strong>Contacted:</strong> {{ lead["contacted_at"] or "-" }}</div>
                                     <div class="date-text"><strong>Booked:</strong> {{ lead["valuation_booked_at"] or "-" }}</div>
+                                </td>
+
+                                <td>
+                                    <div class="date-text"><strong>Marketing:</strong> {{ "Yes" if lead["marketing_consent"] else "No" }}</div>
+                                    <div class="date-text"><strong>Retain until:</strong> {{ lead["retention_until"] or "-" }}</div>
+                                    {% if lead["report_token"] %}
+                                        <a class="text-link" href="/reports/{{ lead['report_token'] }}">Report PDF</a>
+                                    {% else %}
+                                        <div class="date-text">No report</div>
+                                    {% endif %}
                                 </td>
 
                                 <td class="notes-cell">{{ lead["notes"] or "-" }}</td>

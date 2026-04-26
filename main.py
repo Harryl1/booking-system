@@ -1,8 +1,9 @@
 import os
 import sqlite3
 import uuid
+import secrets
 from functools import wraps
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import (
     Flask,
     render_template,
@@ -11,17 +12,32 @@ from flask import (
     session,
     abort,
     g,
+    jsonify,
+    send_file,
 )
+import requests
 from werkzeug.security import generate_password_hash, check_password_hash
 
+from pdf_report import generate_pdf_report
+from property_tool import calculate_property_decision, get_real_valuation, to_float
+
 app = Flask(__name__)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPORTS_DIR = os.path.join(BASE_DIR, "Generated_reports")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", os.urandom(32))
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-# Enable only behind HTTPS in production:
-# app.config["SESSION_COOKIE_SECURE"] = True
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "0") == "1"
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
 
-DB_PATH = "bookings.db"
+DB_PATH = os.environ.get("DB_PATH", os.path.join(BASE_DIR, "bookings.db"))
+INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN", "")
+REPORT_RETENTION_DAYS = int(os.environ.get("REPORT_RETENTION_DAYS", "30"))
+LEAD_RETENTION_DAYS = int(os.environ.get("LEAD_RETENTION_DAYS", "365"))
+
+os.makedirs(REPORTS_DIR, exist_ok=True)
 
 ROLE_AGENT = "agent"
 ROLE_ASSESSOR = "assessor"
@@ -96,7 +112,18 @@ def init_db():
             created_at TEXT NOT NULL,
             contacted_at TEXT,
             valuation_booked_at TEXT,
-            notes TEXT
+            notes TEXT,
+            lead_stage TEXT,
+            is_hot_lead INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT,
+            assigned_agent_id INTEGER,
+            report_filename TEXT,
+            report_token TEXT,
+            report_expires_at TEXT,
+            marketing_consent INTEGER NOT NULL DEFAULT 0,
+            privacy_notice_accepted_at TEXT,
+            retention_until TEXT,
+            FOREIGN KEY (assigned_agent_id) REFERENCES users (id)
         );
 
         CREATE TABLE IF NOT EXISTS bookings (
@@ -132,6 +159,20 @@ def ensure_lead_action_columns():
 
     if "updated_at" not in existing_columns:
         db.execute("ALTER TABLE leads ADD COLUMN updated_at TEXT")
+
+    optional_columns = {
+        "assigned_agent_id": "INTEGER",
+        "report_filename": "TEXT",
+        "report_token": "TEXT",
+        "report_expires_at": "TEXT",
+        "marketing_consent": "INTEGER NOT NULL DEFAULT 0",
+        "privacy_notice_accepted_at": "TEXT",
+        "retention_until": "TEXT",
+    }
+
+    for column_name, column_definition in optional_columns.items():
+        if column_name not in existing_columns:
+            db.execute(f"ALTER TABLE leads ADD COLUMN {column_name} {column_definition}")
 
     db.commit()
 
@@ -177,6 +218,108 @@ def validate_csrf():
     form_token = request.form.get("csrf_token")
     if not session_token or not form_token or session_token != form_token:
         abort(403, "Invalid CSRF token")
+
+
+def validate_internal_api_token():
+    if not INTERNAL_API_TOKEN and app.debug:
+        return
+    if not INTERNAL_API_TOKEN:
+        abort(503, "Internal API token is not configured")
+
+    supplied_token = (
+        request.headers.get("X-Internal-Token")
+        or request.headers.get("Authorization", "").replace("Bearer ", "", 1)
+    )
+    if not supplied_token or not secrets.compare_digest(supplied_token, INTERNAL_API_TOKEN):
+        abort(403, "Invalid internal API token")
+
+
+def agent_lead_clause(alias="leads"):
+    if session.get("role") != ROLE_AGENT:
+        return "", []
+    user_id = session.get("user_id")
+    prefix = f"{alias}." if alias else ""
+    return f"({prefix}assigned_agent_id IS NULL OR {prefix}assigned_agent_id = ?)", [user_id]
+
+
+def retention_date(days):
+    return (datetime.now() + timedelta(days=days)).date().isoformat()
+
+
+def cleanup_expired_reports():
+    db = get_db()
+    now = datetime.now().isoformat()
+    expired = db.execute("""
+        SELECT id, report_filename
+        FROM leads
+        WHERE report_filename IS NOT NULL
+          AND report_expires_at IS NOT NULL
+          AND report_expires_at < ?
+    """, (now,)).fetchall()
+
+    for lead in expired:
+        report_path = os.path.join(REPORTS_DIR, lead["report_filename"])
+        if os.path.exists(report_path):
+            try:
+                os.remove(report_path)
+            except OSError:
+                pass
+        db.execute("""
+            UPDATE leads
+            SET report_filename = NULL,
+                report_token = NULL,
+                report_expires_at = NULL
+            WHERE id = ?
+        """, (lead["id"],))
+
+    db.commit()
+
+
+def cleanup_expired_leads():
+    db = get_db()
+    today = datetime.now().date().isoformat()
+    expired = db.execute("""
+        SELECT id, report_filename
+        FROM leads
+        WHERE retention_until IS NOT NULL
+          AND retention_until < ?
+          AND email NOT LIKE 'deleted+%@local'
+    """, (today,)).fetchall()
+
+    for lead in expired:
+        if lead["report_filename"]:
+            report_path = os.path.join(REPORTS_DIR, lead["report_filename"])
+            if os.path.exists(report_path):
+                try:
+                    os.remove(report_path)
+                except OSError:
+                    pass
+        db.execute("""
+            UPDATE leads
+            SET name = 'Deleted lead',
+                email = ?,
+                phone = '',
+                address = '[removed after retention period]',
+                notes = 'Personal data removed after retention period.',
+                report_filename = NULL,
+                report_token = NULL,
+                report_expires_at = NULL,
+                marketing_consent = 0
+            WHERE id = ?
+        """, (f"deleted+{lead['id']}@local", lead["id"]))
+
+    db.commit()
+
+
+@app.before_request
+def apply_retention_housekeeping():
+    if request.endpoint == "static":
+        return
+    if session.get("last_retention_check") == datetime.now().date().isoformat():
+        return
+    cleanup_expired_reports()
+    cleanup_expired_leads()
+    session["last_retention_check"] = datetime.now().date().isoformat()
 
 
 # -----------------------
@@ -269,6 +412,26 @@ def get_assessor_map(assessors):
     return {assessor["id"]: assessor["username"] for assessor in assessors}
 
 
+def scoped_lead_where(extra_clause="", extra_params=()):
+    clauses = []
+    params = []
+    scope_clause, scope_params = agent_lead_clause("")
+    if scope_clause:
+        clauses.append(scope_clause)
+        params.extend(scope_params)
+    if extra_clause:
+        clauses.append(extra_clause)
+        params.extend(extra_params)
+    if not clauses:
+        return "", []
+    return " WHERE " + " AND ".join(clauses), params
+
+
+def count_scoped_leads(db, extra_clause="", extra_params=()):
+    where_sql, params = scoped_lead_where(extra_clause, extra_params)
+    return db.execute(f"SELECT COUNT(*) FROM leads{where_sql}", tuple(params)).fetchone()[0]
+
+
 def get_booking_for_agent(db, booking_id, user_id):
     return db.execute(
         "SELECT * FROM bookings WHERE id = ? AND user_id = ?",
@@ -288,6 +451,13 @@ def get_booking_for_assessor(db, booking_id, assessor_id):
 # -----------------------
 @app.route("/register", methods=["GET", "POST"])
 def register():
+    db = get_db()
+    user_count = db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    if user_count > 0 and "user_id" not in session:
+        abort(403, "User registration is restricted")
+    if user_count > 0 and session.get("role") != ROLE_AGENT:
+        abort(403, "Only agents can create users")
+
     if request.method == "POST":
         validate_csrf()
 
@@ -304,7 +474,6 @@ def register():
 
         hashed_password = generate_password_hash(password)
 
-        db = get_db()
         try:
             db.execute(
                 "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
@@ -367,41 +536,21 @@ def agencyhub():
     db = get_db()
     today = datetime.now().strftime("%Y-%m-%d")
 
-    total_leads = db.execute(
-        "SELECT COUNT(*) FROM leads"
-    ).fetchone()[0]
+    total_leads = count_scoped_leads(db)
+    new_leads = count_scoped_leads(db, "status = ?", (LEAD_STATUS_NEW,))
+    contacted_leads = count_scoped_leads(db, "status = ?", (LEAD_STATUS_CONTACTED,))
+    qualified_leads = count_scoped_leads(db, "status = ?", (LEAD_STATUS_QUALIFIED,))
+    valuation_booked_leads = count_scoped_leads(db, "status = ?", (LEAD_STATUS_VALUATION_BOOKED,))
+    lost_leads = count_scoped_leads(db, "status = ?", (LEAD_STATUS_LOST,))
 
-    new_leads = db.execute(
-        "SELECT COUNT(*) FROM leads WHERE status = ?",
-        (LEAD_STATUS_NEW,)
-    ).fetchone()[0]
-
-    contacted_leads = db.execute(
-        "SELECT COUNT(*) FROM leads WHERE status = ?",
-        (LEAD_STATUS_CONTACTED,)
-    ).fetchone()[0]
-
-    qualified_leads = db.execute(
-        "SELECT COUNT(*) FROM leads WHERE status = ?",
-        (LEAD_STATUS_QUALIFIED,)
-    ).fetchone()[0]
-
-    valuation_booked_leads = db.execute(
-        "SELECT COUNT(*) FROM leads WHERE status = ?",
-        (LEAD_STATUS_VALUATION_BOOKED,)
-    ).fetchone()[0]
-
-    lost_leads = db.execute(
-        "SELECT COUNT(*) FROM leads WHERE status = ?",
-        (LEAD_STATUS_LOST,)
-    ).fetchone()[0]
-
-    recent_leads = db.execute("""
+    recent_where_sql, recent_params = scoped_lead_where()
+    recent_leads = db.execute(f"""
         SELECT *
         FROM leads
+        {recent_where_sql}
         ORDER BY id DESC
         LIMIT 5
-    """).fetchall()
+    """, tuple(recent_params)).fetchall()
 
     upcoming_jobs = db.execute("""
         SELECT *
@@ -511,6 +660,8 @@ def agencyhub():
         contacted_leads=contacted_leads,
         qualified_leads=qualified_leads,
         valuation_booked_leads=valuation_booked_leads,
+        epc_required_leads=valuation_booked_leads,
+        converted_leads=valuation_booked_leads,
         lost_leads=lost_leads,
         recent_leads=recent_leads,
         upcoming_jobs=upcoming_jobs,
@@ -546,6 +697,11 @@ def leads():
     where_clauses = []
     params = []
 
+    scope_clause, scope_params = agent_lead_clause("")
+    if scope_clause:
+        where_clauses.append(scope_clause)
+        params.extend(scope_params)
+
     if status_filter != "all":
         if status_filter in VALID_LEAD_STATUSES:
             where_clauses.append("status = ?")
@@ -575,22 +731,10 @@ def leads():
 
     leads = db.execute(query, tuple(params)).fetchall()
 
-    total_leads = db.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
-
-    new_leads = db.execute(
-        "SELECT COUNT(*) FROM leads WHERE status = ?",
-        (LEAD_STATUS_NEW,)
-    ).fetchone()[0]
-
-    contacted_leads = db.execute(
-        "SELECT COUNT(*) FROM leads WHERE status = ?",
-        (LEAD_STATUS_CONTACTED,)
-    ).fetchone()[0]
-
-    valuation_booked_leads = db.execute(
-        "SELECT COUNT(*) FROM leads WHERE status = ?",
-        (LEAD_STATUS_VALUATION_BOOKED,)
-    ).fetchone()[0]
+    total_leads = count_scoped_leads(db)
+    new_leads = count_scoped_leads(db, "status = ?", (LEAD_STATUS_NEW,))
+    contacted_leads = count_scoped_leads(db, "status = ?", (LEAD_STATUS_CONTACTED,))
+    valuation_booked_leads = count_scoped_leads(db, "status = ?", (LEAD_STATUS_VALUATION_BOOKED,))
 
     conversion_rate = round(
         (valuation_booked_leads / total_leads) * 100, 1
@@ -620,17 +764,25 @@ def mark_lead_contacted(lead_id):
     notes = request.form.get("notes", "")
 
     db = get_db()
+    scope_clause, scope_params = agent_lead_clause("")
+    where_sql = "id = ?"
+    params = [lead_id]
+    if scope_clause:
+        where_sql += f" AND {scope_clause}"
+        params.extend(scope_params)
 
-    db.execute("""
+    cursor = db.execute(f"""
         UPDATE leads
         SET status = ?, contacted_at = ?, notes = ?
-        WHERE id = ?
+        WHERE {where_sql}
     """, (
         LEAD_STATUS_CONTACTED,
         contacted_at,
         notes,
-        lead_id
+        *params
     ))
+    if cursor.rowcount == 0:
+        abort(404, "Lead not found")
 
     db.commit()
     return redirect("/leads")
@@ -644,17 +796,25 @@ def book_valuation(lead_id):
     notes = request.form.get("notes", "")
 
     db = get_db()
+    scope_clause, scope_params = agent_lead_clause("")
+    where_sql = "id = ?"
+    params = [lead_id]
+    if scope_clause:
+        where_sql += f" AND {scope_clause}"
+        params.extend(scope_params)
 
-    db.execute("""
+    cursor = db.execute(f"""
         UPDATE leads
         SET status = ?, valuation_booked_at = ?, notes = ?
-        WHERE id = ?
+        WHERE {where_sql}
     """, (
         LEAD_STATUS_VALUATION_BOOKED,
         valuation_booked_at,
         notes,
-        lead_id
+        *params
     ))
+    if cursor.rowcount == 0:
+        abort(404, "Lead not found")
 
     db.commit()
     return redirect("/leads")
@@ -698,18 +858,19 @@ def update_lead_status(lead_id):
     new_status = validate_lead_status(request.form.get("status"))
     db = get_db()
 
-    lead = db.execute(
-        "SELECT * FROM leads WHERE id = ?",
-        (lead_id,)
-    ).fetchone()
+    scope_clause, scope_params = agent_lead_clause("")
+    where_sql = "id = ?"
+    params = [lead_id]
+    if scope_clause:
+        where_sql += f" AND {scope_clause}"
+        params.extend(scope_params)
+
+    lead = db.execute(f"SELECT * FROM leads WHERE {where_sql}", tuple(params)).fetchone()
 
     if lead is None:
         return "Lead not found", 404
 
-    db.execute(
-        "UPDATE leads SET status = ? WHERE id = ?",
-        (new_status, lead_id)
-    )
+    db.execute(f"UPDATE leads SET status = ? WHERE {where_sql}", (new_status, *params))
     db.commit()
 
     return redirect("/leads")
@@ -1083,38 +1244,173 @@ def forbidden(error):
 def not_found(error):
     return str(error), 404
 
-from flask import request, jsonify
-from datetime import datetime
-import sqlite3
-
 @app.get("/debug-leads")
+@login_required
+@role_required(ROLE_AGENT)
 def debug_leads():
-    conn = sqlite3.connect("bookings.db")
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT * FROM leads ORDER BY rowid DESC LIMIT 10")
-    rows = cursor.fetchall()
-    conn.close()
-
+    db = get_db()
+    where_sql, params = scoped_lead_where()
+    rows = db.execute(f"SELECT * FROM leads{where_sql} ORDER BY rowid DESC LIMIT 10", tuple(params)).fetchall()
     return jsonify([dict(row) for row in rows])
 
-@app.route("/save-lead", methods=["GET", "POST"])
-def save_lead():
-    if request.method == "GET":
-        return jsonify({"status": "save-lead route is working"})
 
+@app.post("/api/property/value")
+def property_value():
     data = request.get_json(force=True)
-    print("INCOMING LEAD:", data)
+    address = (data.get("address") or "").strip()
+    property_type = (data.get("property_type") or "").strip()
 
+    if not address:
+        return jsonify({"error": "Address is required."}), 400
+
+    try:
+        valuation = get_real_valuation(address, property_type)
+        return jsonify(valuation)
+    except requests.RequestException as error:
+        return jsonify({"error": f"Valuation API request failed: {str(error)}"}), 502
+    except Exception:
+        return jsonify({"error": "Unexpected valuation error."}), 500
+
+
+@app.post("/api/property/calculate")
+def property_calculate():
+    data = request.get_json(force=True)
+    try:
+        return jsonify(calculate_property_decision(data))
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    except Exception:
+        return jsonify({"error": "Unexpected calculator error."}), 500
+
+
+@app.post("/api/property/lead")
+def property_lead():
+    data = request.get_json(force=True)
+    return save_lead_payload(data, create_report=True)
+
+
+@app.post("/api/property/lead-action")
+def property_lead_action():
+    data = request.get_json(force=True)
+
+    lead_id = data.get("lead_id")
+    email = (data.get("email") or "").strip().lower()
+    action = (data.get("action") or "").strip()
+    updated_at = datetime.now().isoformat()
+
+    if action not in ["valuation_requested", "contact_requested"]:
+        return jsonify({"success": False, "error": "Invalid action"}), 400
+    if not lead_id or not email:
+        return jsonify({"success": False, "error": "Lead id and email are required"}), 400
+
+    lead_stage = action
+    new_note_line = f"[{updated_at}] lead action: {lead_stage}"
+
+    db = get_db()
+    lead = db.execute("""
+        SELECT id, notes
+        FROM leads
+        WHERE id = ? AND LOWER(email) = ?
+    """, (lead_id, email)).fetchone()
+
+    if lead is None:
+        return jsonify({"success": False, "error": "Lead not found"}), 404
+
+    existing_notes = lead["notes"] or ""
+    updated_notes = (existing_notes + "\n" + new_note_line).strip()
+
+    db.execute("""
+        UPDATE leads
+        SET lead_stage = ?,
+            is_hot_lead = 1,
+            updated_at = ?,
+            notes = ?
+        WHERE id = ?
+    """, (lead_stage, updated_at, updated_notes, lead_id))
+    db.commit()
+
+    return jsonify({
+        "success": True,
+        "lead_id": lead_id,
+        "lead_stage": lead_stage,
+    })
+
+
+@app.get("/reports/<report_token>")
+def get_private_report(report_token):
+    token = (report_token or "").strip()
+    if not token:
+        abort(404)
+
+    db = get_db()
+    lead = db.execute("""
+        SELECT report_filename, report_expires_at
+        FROM leads
+        WHERE report_token = ?
+    """, (token,)).fetchone()
+
+    if lead is None:
+        abort(404)
+
+    if lead["report_expires_at"] and lead["report_expires_at"] < datetime.now().isoformat():
+        abort(410, "Report link has expired")
+
+    filename = lead["report_filename"]
+    if not filename:
+        abort(404)
+
+    filepath = os.path.join(REPORTS_DIR, filename)
+    if not os.path.exists(filepath):
+        abort(404)
+
+    return send_file(filepath, mimetype="application/pdf", as_attachment=True)
+
+
+def create_lead_report(data):
+    report_token = secrets.token_urlsafe(32)
+    filename = f"report_{uuid.uuid4().hex}.pdf"
+    filepath = os.path.join(REPORTS_DIR, filename)
+
+    selected_services = data.get("help_requested") or data.get("selected_services") or []
+    if isinstance(selected_services, str):
+        selected_services = [selected_services.strip()] if selected_services.strip() else []
+
+    pdf_data = {
+        "name": data.get("name") or data.get("full_name"),
+        "email": data.get("email"),
+        "address": data.get("address"),
+        "valuation_low": to_float(data.get("valuation_low", 0)),
+        "valuation_high": to_float(data.get("valuation_high", data.get("valuation", 0))),
+        "moving_costs": to_float(data.get("moving_costs", 0)),
+        "net_proceeds": to_float(data.get("net_proceeds", 0)),
+        "borrowing_power": to_float(data.get("borrowing_power", 0)),
+        "max_budget": to_float(data.get("max_budget", 0)),
+        "recommendation": data.get("recommendation") or "No recommendation available.",
+        "selected_services": selected_services,
+    }
+
+    logo_path = os.path.join(STATIC_DIR, "logo.png")
+    if not os.path.exists(logo_path):
+        logo_path = None
+
+    generate_pdf_report(pdf_data, filepath, logo_path=logo_path)
+    report_expires_at = (datetime.now() + timedelta(days=REPORT_RETENTION_DAYS)).isoformat()
+    return filename, report_token, report_expires_at
+
+
+def save_lead_payload(data, create_report=False):
     name = (data.get("name") or data.get("full_name") or "").strip()
-    email = (data.get("email") or "").strip()
+    email = (data.get("email") or "").strip().lower()
     phone = (data.get("phone") or "").strip()
     address = (data.get("address") or "").strip()
-    valuation = data.get("valuation", 0)
+    valuation = data.get("valuation") or data.get("valuation_high") or 0
     source = (data.get("source") or "property_tool").strip()
     created_at = data.get("created_at") or datetime.now().isoformat()
     notes = (data.get("notes") or "").strip()
+    marketing_consent = 1 if data.get("marketing_consent") else 0
+    privacy_notice_accepted = 1 if data.get("privacy_notice_accepted") else 0
+    privacy_notice_accepted_at = datetime.now().isoformat() if privacy_notice_accepted else None
+    retention_until = data.get("retention_until") or retention_date(LEAD_RETENTION_DAYS)
 
     if not name:
         return jsonify({"success": False, "error": "Missing name"}), 400
@@ -1124,17 +1420,28 @@ def save_lead():
         return jsonify({"success": False, "error": "Missing phone"}), 400
     if not address:
         return jsonify({"success": False, "error": "Missing address"}), 400
+    if not privacy_notice_accepted:
+        return jsonify({"success": False, "error": "Privacy notice acceptance is required"}), 400
+
+    report_filename = None
+    report_token = None
+    report_expires_at = None
 
     try:
         valuation = int(float(valuation))
+        if create_report:
+            report_filename, report_token, report_expires_at = create_lead_report(data)
 
         db = get_db()
-        db.execute("""
+        assigned_agent_id = session.get("user_id") if session.get("role") == ROLE_AGENT else None
+        cursor = db.execute("""
             INSERT INTO leads (
                 name, email, phone, address, valuation,
                 source, status, created_at, notes,
-                lead_stage, is_hot_lead, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                lead_stage, is_hot_lead, updated_at,
+                assigned_agent_id, report_filename, report_token, report_expires_at,
+                marketing_consent, privacy_notice_accepted_at, retention_until
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             name,
             email,
@@ -1145,22 +1452,45 @@ def save_lead():
             LEAD_STATUS_NEW,
             created_at,
             notes,
-            "report_generated",
+            "report_generated" if create_report else "lead_saved",
             0,
-            created_at
+            created_at,
+            assigned_agent_id,
+            report_filename,
+            report_token,
+            report_expires_at,
+            marketing_consent,
+            privacy_notice_accepted_at,
+            retention_until,
         ))
 
         db.commit()
-        print("LEAD SAVED SUCCESSFULLY")
+        lead_id = cursor.lastrowid
+        response = {
+            "success": True,
+            "lead_id": lead_id,
+        }
+        if report_token:
+            response["pdf_url"] = f"/reports/{report_token}"
+            response["report_expires_at"] = report_expires_at
+        return jsonify(response)
 
-        return jsonify({"success": True})
+    except Exception as error:
+        return jsonify({"success": False, "error": str(error)}), 500
 
-    except Exception as e:
-        print("ERROR SAVING LEAD:", str(e))
-        return jsonify({"success": False, "error": str(e)}), 500
+@app.route("/save-lead", methods=["GET", "POST"])
+def save_lead():
+    validate_internal_api_token()
+
+    if request.method == "GET":
+        return jsonify({"status": "save-lead route is working"})
+
+    data = request.get_json(force=True)
+    return save_lead_payload(data)
 
 @app.route("/update-lead", methods=["POST"])
 def update_lead():
+    validate_internal_api_token()
     data = request.get_json(force=True)
 
     email = (data.get("email") or "").strip().lower()
@@ -1206,13 +1536,6 @@ def update_lead():
 
         db.commit()
 
-        print("LEAD UPDATED:", {
-            "email": email,
-            "lead_stage": lead_stage,
-            "is_hot_lead": is_hot_lead,
-            "updated_at": updated_at
-        })
-
         return jsonify({
             "success": True,
             "message": "Lead updated",
@@ -1222,13 +1545,20 @@ def update_lead():
         })
 
     except Exception as e:
-        print("ERROR UPDATING LEAD:", str(e))
         return jsonify({"success": False, "error": str(e)}), 500
+def bootstrap_app():
+    with app.app_context():
+        init_db()
+        ensure_lead_action_columns()
+        cleanup_expired_reports()
+        cleanup_expired_leads()
+
+
+bootstrap_app()
+
+
 # -----------------------
 # App Entrypoint
 # -----------------------
 if __name__ == "__main__":
-    with app.app_context():
-        init_db()
-        ensure_lead_action_columns()
-    app.run(debug=True)
+    app.run(debug=os.environ.get("FLASK_DEBUG", "0") == "1")
