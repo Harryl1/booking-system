@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Organisation - equiome</title>
+    <style>
+        * { box-sizing:border-box; }
+        :root { --bg:#f4f7f8; --panel:#fff; --border:#d7dee7; --text:#243342; --muted:#5b6573; --brand:#12344d; --brand2:#2a7f9e; --radius:8px; }
+        body { margin:0; font-family:Arial,sans-serif; background:var(--bg); color:var(--text); }
+        .layout { display:flex; min-height:100vh; }
+        .sidebar { width:240px; background:var(--brand); color:#fff; padding:24px 18px; }
+        .sidebar h2 { margin:0 0 24px; text-transform:lowercase; }
+        .sidebar a { display:block; color:#fff; text-decoration:none; padding:10px 12px; border-radius:var(--radius); margin-bottom:8px; }
+        .sidebar a:hover,.sidebar a.active { background:#194967; }
+        .main { flex:1; padding:24px; }
+        .topbar,.panel { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:18px; margin-bottom:18px; }
+        h1,h2,h3 { margin-top:0; color:var(--brand); }
+        .grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+        input,select { width:100%; border:1px solid var(--border); border-radius:var(--radius); padding:10px 12px; font-size:14px; }
+        label { display:block; font-weight:bold; font-size:13px; margin-bottom:6px; }
+        .field { margin-bottom:12px; }
+        button { border:1px solid var(--border); background:#fff; color:var(--text); border-radius:var(--radius); padding:10px 14px; cursor:pointer; }
+        .primary { background:var(--brand2); color:#fff; border:none; }
+        table { width:100%; border-collapse:collapse; }
+        th,td { text-align:left; padding:10px; border-bottom:1px solid var(--border); }
+        th,.muted { color:var(--muted); font-size:13px; }
+        @media (max-width:800px) { .layout{display:block;} .sidebar{width:auto;} .grid{grid-template-columns:1fr;} }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <h2>equiome</h2>
+        <a href="/">Dashboard</a>
+        <a href="/leads">Leads</a>
+        <a href="/referrals">Referrals</a>
+        <a href="/tasks">Tasks</a>
+        <a href="/settings/organisation" class="active">Organisation</a>
+        <a href="/epc">EPCHub</a>
+        <a href="/logout">Logout</a>
+    </aside>
+    <main class="main">
+        <div class="topbar">
+            <h1>Organisation Settings</h1>
+            <div class="muted">{{ lead_count }} lead(s) assigned to this organisation</div>
+        </div>
+
+        <div class="grid">
+            <div class="panel">
+                <h3>Account</h3>
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="action" value="update_org">
+                    <div class="field">
+                        <label>Organisation name</label>
+                        <input name="name" value="{{ organisation['name'] }}">
+                    </div>
+                    <div class="field">
+                        <label>Plan</label>
+                        <select name="subscription_plan">
+                            {% for plan in ["starter", "pro", "area partner"] %}
+                                <option value="{{ plan }}" {% if organisation["subscription_plan"] == plan %}selected{% endif %}>{{ plan|title }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>Billing status</label>
+                        <select name="billing_status">
+                            {% for status in ["trial", "active", "past due", "cancelled"] %}
+                                <option value="{{ status }}" {% if organisation["billing_status"] == status %}selected{% endif %}>{{ status|title }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>Lead allowance</label>
+                        <input name="lead_allowance" type="number" value="{{ organisation['lead_allowance'] }}">
+                    </div>
+                    <div class="field">
+                        <label>Trial ends</label>
+                        <input name="trial_ends_at" type="date" value="{{ organisation['trial_ends_at'] or '' }}">
+                    </div>
+                    <button type="submit" class="primary">Save account</button>
+                </form>
+            </div>
+
+            <div class="panel">
+                <h3>Add Territory</h3>
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="action" value="add_territory">
+                    <div class="field">
+                        <label>Label</label>
+                        <input name="label" placeholder="North London">
+                    </div>
+                    <div class="field">
+                        <label>Postcode prefix</label>
+                        <input name="postcode_prefix" placeholder="N1">
+                    </div>
+                    <button type="submit" class="primary">Add territory</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h3>Territories</h3>
+            <table>
+                <tr><th>Label</th><th>Postcode prefix</th></tr>
+                {% for territory in territories %}
+                    <tr><td>{{ territory["label"] }}</td><td>{{ territory["postcode_prefix"] }}</td></tr>
+                {% endfor %}
+            </table>
+            {% if not territories %}<p class="muted">No postcode territories yet. Unmatched leads use the default organisation.</p>{% endif %}
+        </div>
+
+        <div class="panel">
+            <h3>Users</h3>
+            <table>
+                <tr><th>Username</th><th>Role</th></tr>
+                {% for user in users %}
+                    <tr><td>{{ user["username"] }}</td><td>{{ user["role"]|title }}</td></tr>
+                {% endfor %}
+            </table>
+        </div>
+    </main>
+</div>
+</body>
+</html>

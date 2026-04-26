@@ -5,6 +5,7 @@ import secrets
 import csv
 import io
 import smtplib
+import re
 from functools import wraps
 from datetime import datetime, timedelta
 from email.message import EmailMessage
@@ -173,7 +174,29 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
-            role TEXT NOT NULL
+            role TEXT NOT NULL,
+            organisation_id INTEGER,
+            FOREIGN KEY (organisation_id) REFERENCES organisations (id)
+        );
+
+        CREATE TABLE IF NOT EXISTS organisations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            subscription_plan TEXT NOT NULL DEFAULT 'starter',
+            billing_status TEXT NOT NULL DEFAULT 'trial',
+            lead_allowance INTEGER NOT NULL DEFAULT 50,
+            trial_ends_at TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS branch_territories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organisation_id INTEGER NOT NULL,
+            label TEXT NOT NULL,
+            postcode_prefix TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (organisation_id) REFERENCES organisations (id),
+            UNIQUE (organisation_id, postcode_prefix)
         );
 
         CREATE TABLE IF NOT EXISTS leads (
@@ -205,7 +228,9 @@ def init_db():
             utm_campaign TEXT,
             lead_score INTEGER NOT NULL DEFAULT 0,
             next_follow_up_at TEXT,
-            FOREIGN KEY (assigned_agent_id) REFERENCES users (id)
+            organisation_id INTEGER,
+            FOREIGN KEY (assigned_agent_id) REFERENCES users (id),
+            FOREIGN KEY (organisation_id) REFERENCES organisations (id)
         );
 
         CREATE TABLE IF NOT EXISTS lead_notes (
@@ -293,6 +318,7 @@ def ensure_lead_action_columns():
         db.execute("ALTER TABLE leads ADD COLUMN updated_at TEXT")
 
     optional_columns = {
+        "organisation_id": "INTEGER",
         "assigned_agent_id": "INTEGER",
         "report_filename": "TEXT",
         "report_token": "TEXT",
@@ -312,7 +338,48 @@ def ensure_lead_action_columns():
         if column_name not in existing_columns:
             db.execute(f"ALTER TABLE leads ADD COLUMN {column_name} {column_definition}")
 
+    user_columns = {
+        row["name"]
+        for row in db.execute("PRAGMA table_info(users)").fetchall()
+    }
+    if "organisation_id" not in user_columns:
+        db.execute("ALTER TABLE users ADD COLUMN organisation_id INTEGER")
+
+    ensure_default_organisation(db)
+
     db.commit()
+
+
+def ensure_default_organisation(db):
+    now = datetime.now().isoformat()
+    default_org = db.execute(
+        "SELECT id FROM organisations ORDER BY id ASC LIMIT 1"
+    ).fetchone()
+    if default_org is None:
+        cursor = db.execute("""
+            INSERT INTO organisations (
+                name, subscription_plan, billing_status, lead_allowance, trial_ends_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            "Equiome Demo Agency",
+            "pro",
+            "trial",
+            500,
+            (datetime.now() + timedelta(days=30)).date().isoformat(),
+            now,
+        ))
+        organisation_id = cursor.lastrowid
+    else:
+        organisation_id = default_org["id"]
+
+    db.execute(
+        "UPDATE users SET organisation_id = ? WHERE organisation_id IS NULL",
+        (organisation_id,)
+    )
+    db.execute(
+        "UPDATE leads SET organisation_id = ? WHERE organisation_id IS NULL",
+        (organisation_id,)
+    )
 
 
 # -----------------------
@@ -572,9 +639,48 @@ def send_customer_confirmation(email, report_url):
 def agent_lead_clause(alias="leads"):
     if session.get("role") != ROLE_AGENT:
         return "", []
-    user_id = session.get("user_id")
+    organisation_id = session.get("organisation_id")
+    if not organisation_id:
+        return "", []
     prefix = f"{alias}." if alias else ""
-    return f"({prefix}assigned_agent_id IS NULL OR {prefix}assigned_agent_id = ?)", [user_id]
+    return f"{prefix}organisation_id = ?", [organisation_id]
+
+
+def current_organisation_id():
+    return session.get("organisation_id")
+
+
+def extract_postcode_prefix(address):
+    text = (address or "").upper()
+    match = re.search(r"\b([A-Z]{1,2}\d[A-Z\d]?)\s*\d[A-Z]{2}\b", text)
+    if match:
+        return match.group(1)
+    compact = re.sub(r"[^A-Z0-9 ]", " ", text)
+    parts = compact.split()
+    for part in parts:
+        if re.match(r"^[A-Z]{1,2}\d[A-Z\d]?$", part):
+            return part
+    return ""
+
+
+def default_organisation_id(db):
+    row = db.execute("SELECT id FROM organisations ORDER BY id ASC LIMIT 1").fetchone()
+    return row["id"] if row else None
+
+
+def organisation_for_address(db, address):
+    prefix = extract_postcode_prefix(address)
+    if prefix:
+        territory = db.execute("""
+            SELECT organisation_id
+            FROM branch_territories
+            WHERE ? LIKE postcode_prefix || '%'
+            ORDER BY LENGTH(postcode_prefix) DESC
+            LIMIT 1
+        """, (prefix,)).fetchone()
+        if territory:
+            return territory["organisation_id"]
+    return default_organisation_id(db)
 
 
 def retention_date(days):
@@ -810,11 +916,12 @@ def register():
             abort(400, "Password must be at least 6 characters")
 
         hashed_password = generate_password_hash(password)
+        organisation_id = session.get("organisation_id") or default_organisation_id(db)
 
         try:
             db.execute(
-                "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-                (username, hashed_password, role)
+                "INSERT INTO users (username, password, role, organisation_id) VALUES (?, ?, ?, ?)",
+                (username, hashed_password, role, organisation_id)
             )
             db.commit()
         except sqlite3.IntegrityError:
@@ -847,6 +954,7 @@ def login():
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             session["role"] = user["role"]
+            session["organisation_id"] = user["organisation_id"]
             get_csrf_token()
             return redirect("/")
 
@@ -1392,9 +1500,9 @@ def add_test_lead():
     db.execute("""
         INSERT INTO leads (
             name, email, phone, address, valuation,
-            source, status, created_at, notes
+            source, status, created_at, notes, organisation_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         "John Smith",
         "john@email.com",
@@ -1404,7 +1512,8 @@ def add_test_lead():
         "facebook",
         LEAD_STATUS_NEW,
         datetime.now().strftime("%Y-%m-%d"),
-        ""
+        "",
+        current_organisation_id() or default_organisation_id(db),
     ))
     db.commit()
 
@@ -1604,6 +1713,110 @@ def export_leads_csv():
     response.headers["Content-Disposition"] = "attachment; filename=leads.csv"
     write_audit_log("exported_csv", "lead")
     return response
+
+
+@app.route("/settings/organisation", methods=["GET", "POST"])
+@login_required
+@role_required(ROLE_AGENT)
+def organisation_settings():
+    db = get_db()
+    organisation_id = current_organisation_id() or default_organisation_id(db)
+    if not organisation_id:
+        abort(404, "Organisation not found")
+
+    if request.method == "POST":
+        validate_csrf()
+        action = (request.form.get("action") or "").strip()
+
+        if action == "update_org":
+            name = validate_required_text(request.form.get("name"), "organisation name", max_length=150)
+            subscription_plan = validate_required_text(
+                request.form.get("subscription_plan"),
+                "subscription plan",
+                max_length=50,
+            )
+            billing_status = validate_required_text(
+                request.form.get("billing_status"),
+                "billing status",
+                max_length=50,
+            )
+            lead_allowance = validate_int(
+                request.form.get("lead_allowance"),
+                "lead allowance",
+                min_value=0,
+                max_value=100000,
+            )
+            trial_ends_at = (request.form.get("trial_ends_at") or "").strip() or None
+            db.execute("""
+                UPDATE organisations
+                SET name = ?,
+                    subscription_plan = ?,
+                    billing_status = ?,
+                    lead_allowance = ?,
+                    trial_ends_at = ?
+                WHERE id = ?
+            """, (
+                name,
+                subscription_plan,
+                billing_status,
+                lead_allowance,
+                trial_ends_at,
+                organisation_id,
+            ))
+            db.commit()
+            write_audit_log("updated", "organisation", organisation_id)
+
+        elif action == "add_territory":
+            label = validate_required_text(request.form.get("label"), "territory label", max_length=100)
+            postcode_prefix = validate_required_text(
+                request.form.get("postcode_prefix"),
+                "postcode prefix",
+                max_length=10,
+            ).upper().replace(" ", "")
+            db.execute("""
+                INSERT OR IGNORE INTO branch_territories (
+                    organisation_id, label, postcode_prefix, created_at
+                ) VALUES (?, ?, ?, ?)
+            """, (
+                organisation_id,
+                label,
+                postcode_prefix,
+                datetime.now().isoformat(),
+            ))
+            db.commit()
+            write_audit_log("added", "branch_territory", postcode_prefix)
+
+        return redirect("/settings/organisation")
+
+    organisation = db.execute(
+        "SELECT * FROM organisations WHERE id = ?",
+        (organisation_id,)
+    ).fetchone()
+    territories = db.execute("""
+        SELECT *
+        FROM branch_territories
+        WHERE organisation_id = ?
+        ORDER BY postcode_prefix ASC
+    """, (organisation_id,)).fetchall()
+    users = db.execute("""
+        SELECT id, username, role
+        FROM users
+        WHERE organisation_id = ?
+        ORDER BY username ASC
+    """, (organisation_id,)).fetchall()
+    lead_count = db.execute(
+        "SELECT COUNT(*) FROM leads WHERE organisation_id = ?",
+        (organisation_id,)
+    ).fetchone()[0]
+
+    return render_template(
+        "organisation_settings.html",
+        organisation=organisation,
+        territories=territories,
+        users=users,
+        lead_count=lead_count,
+        csrf_token=get_csrf_token(),
+    )
 
 
 # -----------------------
@@ -2176,6 +2389,11 @@ def save_lead_payload(data, create_report=False):
         lead_score = calculate_lead_score(data, bool(marketing_consent))
 
         db = get_db()
+        organisation_id = (
+            current_organisation_id()
+            if session.get("role") == ROLE_AGENT
+            else organisation_for_address(db, address)
+        )
         assigned_agent_id = session.get("user_id") if session.get("role") == ROLE_AGENT else None
         cursor = db.execute("""
             INSERT INTO leads (
@@ -2184,8 +2402,9 @@ def save_lead_payload(data, create_report=False):
                 lead_stage, is_hot_lead, updated_at,
                 assigned_agent_id, report_filename, report_token, report_expires_at,
                 marketing_consent, privacy_notice_accepted_at, retention_until,
-                source_page, utm_source, utm_medium, utm_campaign, lead_score, next_follow_up_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                source_page, utm_source, utm_medium, utm_campaign, lead_score, next_follow_up_at,
+                organisation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             name,
             email,
@@ -2212,6 +2431,7 @@ def save_lead_payload(data, create_report=False):
             utm_campaign,
             lead_score,
             (datetime.now() + timedelta(days=1)).isoformat(),
+            organisation_id,
         ))
 
         lead_id = cursor.lastrowid
