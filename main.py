@@ -1180,6 +1180,132 @@ def leads():
         referral_statuses=list(VALID_REFERRAL_STATUSES),
         csrf_token=get_csrf_token()
     )
+
+
+@app.get("/leads/<int:lead_id>")
+@login_required
+def lead_detail(lead_id):
+    db = get_db()
+    scope_clause, scope_params = agent_lead_clause("")
+    where_sql = "id = ?"
+    params = [lead_id]
+    if scope_clause:
+        where_sql += f" AND {scope_clause}"
+        params.extend(scope_params)
+
+    lead = db.execute(f"SELECT * FROM leads WHERE {where_sql}", tuple(params)).fetchone()
+    if lead is None:
+        abort(404, "Lead not found")
+
+    notes = db.execute("""
+        SELECT lead_notes.*, users.username
+        FROM lead_notes
+        LEFT JOIN users ON users.id = lead_notes.user_id
+        WHERE lead_notes.lead_id = ?
+        ORDER BY lead_notes.created_at DESC
+    """, (lead_id,)).fetchall()
+    tasks = db.execute("""
+        SELECT *
+        FROM lead_tasks
+        WHERE lead_id = ?
+        ORDER BY completed_at IS NOT NULL, due_at ASC
+    """, (lead_id,)).fetchall()
+    referrals = db.execute("""
+        SELECT *
+        FROM service_referrals
+        WHERE lead_id = ?
+        ORDER BY created_at ASC
+    """, (lead_id,)).fetchall()
+
+    write_audit_log("viewed", "lead", lead_id)
+    return render_template(
+        "lead_detail.html",
+        lead=lead,
+        notes=notes,
+        tasks=tasks,
+        referrals=referrals,
+        lead_statuses=list(VALID_LEAD_STATUSES),
+        referral_statuses=list(VALID_REFERRAL_STATUSES),
+        service_labels=SERVICE_LABELS,
+        csrf_token=get_csrf_token(),
+    )
+
+
+@app.get("/referrals")
+@login_required
+def referrals():
+    db = get_db()
+    status_filter = request.args.get("status", "all").strip().lower()
+    service_filter = request.args.get("service", "all").strip().lower()
+
+    where_clauses = []
+    params = []
+    scope_clause, scope_params = agent_lead_clause("leads")
+    if scope_clause:
+        where_clauses.append(scope_clause)
+        params.extend(scope_params)
+    if status_filter != "all" and status_filter in VALID_REFERRAL_STATUSES:
+        where_clauses.append("service_referrals.status = ?")
+        params.append(status_filter)
+    if service_filter != "all" and service_filter in VALID_SERVICE_TYPES:
+        where_clauses.append("service_referrals.service_type = ?")
+        params.append(service_filter)
+
+    where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+    rows = db.execute(f"""
+        SELECT service_referrals.*, leads.name, leads.email, leads.phone, leads.address, leads.lead_score
+        FROM service_referrals
+        JOIN leads ON leads.id = service_referrals.lead_id
+        {where_sql}
+        ORDER BY service_referrals.status ASC, leads.lead_score DESC, service_referrals.created_at DESC
+    """, tuple(params)).fetchall()
+
+    return render_template(
+        "referrals.html",
+        referrals=rows,
+        status_filter=status_filter,
+        service_filter=service_filter,
+        referral_statuses=list(VALID_REFERRAL_STATUSES),
+        service_types=list(VALID_SERVICE_TYPES),
+        service_labels=SERVICE_LABELS,
+        csrf_token=get_csrf_token(),
+    )
+
+
+@app.get("/tasks")
+@login_required
+def tasks():
+    db = get_db()
+    view_filter = request.args.get("view", "open").strip().lower()
+    where_clauses = []
+    params = []
+    scope_clause, scope_params = agent_lead_clause("leads")
+    if scope_clause:
+        where_clauses.append(scope_clause)
+        params.extend(scope_params)
+    if view_filter == "due":
+        where_clauses.append("lead_tasks.completed_at IS NULL AND date(lead_tasks.due_at) <= date(?)")
+        params.append(datetime.now().date().isoformat())
+    elif view_filter == "completed":
+        where_clauses.append("lead_tasks.completed_at IS NOT NULL")
+    else:
+        where_clauses.append("lead_tasks.completed_at IS NULL")
+
+    where_sql = "WHERE " + " AND ".join(where_clauses)
+    rows = db.execute(f"""
+        SELECT lead_tasks.*, leads.name, leads.email, leads.phone, leads.address, leads.lead_score
+        FROM lead_tasks
+        JOIN leads ON leads.id = lead_tasks.lead_id
+        {where_sql}
+        ORDER BY lead_tasks.completed_at IS NOT NULL, lead_tasks.due_at ASC
+    """, tuple(params)).fetchall()
+
+    return render_template(
+        "tasks.html",
+        tasks=rows,
+        view_filter=view_filter,
+        csrf_token=get_csrf_token(),
+    )
 @app.route("/leads/mark-contacted/<int:lead_id>", methods=["POST"])
 @login_required
 @role_required(ROLE_AGENT)
@@ -1414,7 +1540,7 @@ def update_referral(referral_id):
     )
     db.commit()
     write_audit_log("updated_referral", "service_referral", referral_id)
-    return redirect("/leads")
+    return redirect(request.referrer or "/referrals")
 
 
 @app.route("/leads/tasks/complete/<int:task_id>", methods=["POST"])
@@ -1439,7 +1565,7 @@ def complete_lead_task(task_id):
     )
     db.commit()
     write_audit_log("completed_task", "lead_task", task_id)
-    return redirect("/leads")
+    return redirect(request.referrer or "/tasks")
 
 
 @app.get("/leads/export.csv")

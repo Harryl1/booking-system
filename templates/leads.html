@@ -518,6 +518,8 @@
         <div class="brand">equiome</div>
         <a href="/">Dashboard</a>
         <a href="/leads" class="active">Leads</a>
+        <a href="/referrals">Referrals</a>
+        <a href="/tasks">Tasks</a>
         <a href="/epc">EPCHub</a>
         <a href="/logout">Logout</a>
     </aside>
@@ -673,216 +675,56 @@
                         <table>
                             <tr>
                                 <th>Lead</th>
-                                <th>Address</th>
-                                <th>Value</th>
-                                <th>Source</th>
+                                <th>Contact</th>
+                                <th>Property</th>
+                                <th>Score</th>
                                 <th>Status</th>
                                 <th>Services</th>
-                                <th>Dates</th>
-                                <th>Data</th>
-                                <th>Notes</th>
-                                {% if session.role == "agent" %}
-                                <th>Actions</th>
-                                {% endif %}
+                                <th>Next follow-up</th>
+                                <th></th>
                             </tr>
 
                             {% for lead in leads %}
+                            {% set referrals = referrals_by_lead.get(lead["id"], []) %}
                             <tr>
                                 <td>
                                     <div class="lead-name">{{ lead["name"] }}</div>
-                                    <div class="lead-meta">
-                                        <a class="phone-link" href="tel:{{ lead['phone'] }}">{{ lead["phone"] }}</a><br>
-                                        <a class="email-link" href="mailto:{{ lead['email'] }}">{{ lead["email"] }}</a>
-                                        <br>Score: {{ lead["lead_score"] or 0 }}/100
-                                        {% if lead["is_hot_lead"] or lead["lead_score"] >= 60 %}
-                                            <br><span class="badge badge-hot">Hot</span>
-                                        {% endif %}
-                                    </div>
+                                    <div class="lead-meta">{{ lead["source"]|title }}{% if lead["utm_campaign"] %} · {{ lead["utm_campaign"] }}{% endif %}</div>
                                 </td>
-
-                                <td class="lead-address">{{ lead["address"] }}</td>
-
-                                <td>£{{ lead["valuation"] }}</td>
-
                                 <td>
-                                    <span class="badge badge-source">{{ lead["source"]|title }}</span>
-                                    {% if lead["utm_campaign"] %}
-                                        <div class="date-text">{{ lead["utm_campaign"] }}</div>
+                                    <a class="phone-link" href="tel:{{ lead['phone'] }}">{{ lead["phone"] }}</a><br>
+                                    <a class="email-link" href="mailto:{{ lead['email'] }}">{{ lead["email"] }}</a>
+                                </td>
+                                <td class="lead-address">
+                                    {{ lead["address"] }}<br>
+                                    <span class="date-text">£{{ lead["valuation"] }}</span>
+                                </td>
+                                <td>
+                                    <strong>{{ lead["lead_score"] or 0 }}/100</strong>
+                                    {% if lead["is_hot_lead"] or lead["lead_score"] >= 60 %}
+                                        <br><span class="badge badge-hot">Hot</span>
                                     {% endif %}
                                 </td>
-
                                 <td>
-                                    {% if lead["status"] == "new" %}
-                                        <span class="badge badge-new">New</span>
-                                    {% elif lead["status"] == "contacted" %}
-                                        <span class="badge badge-contacted">Contacted</span>
-                                    {% elif lead["status"] == "valuation booked" %}
-                                        <span class="badge badge-booked">Valuation Booked</span>
-                                    {% elif lead["status"] == "qualified" %}
-                                        <span class="badge badge-qualified">Qualified</span>
-                                    {% else %}
-                                        <span class="badge badge-lost">{{ lead["status"]|title }}</span>
-                                    {% endif %}
+                                    <span class="badge {% if lead['status'] == 'new' %}badge-new{% elif lead['status'] == 'contacted' %}badge-contacted{% elif lead['status'] == 'valuation booked' %}badge-booked{% elif lead['status'] == 'qualified' %}badge-qualified{% else %}badge-lost{% endif %}">
+                                        {{ lead["status"]|title }}
+                                    </span>
                                 </td>
-
                                 <td>
-                                    {% set referrals = referrals_by_lead.get(lead["id"], []) %}
                                     {% if referrals %}
                                         {% for referral in referrals %}
-                                            <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #eef2f7;">
-                                                <div><strong>{{ service_labels.get(referral["service_type"], referral["service_type"]) }}</strong></div>
-                                                <div class="date-text">{{ referral["status"]|title }}</div>
-                                                {% if referral["assigned_to"] %}
-                                                    <div class="date-text">To: {{ referral["assigned_to"] }}</div>
-                                                {% endif %}
-                                                {% if referral["fee_expected"] or referral["fee_received"] %}
-                                                    <div class="date-text">Fee: £{{ referral["fee_received"] }} / £{{ referral["fee_expected"] }}</div>
-                                                {% endif %}
-                                                {% if session.role == "agent" %}
-                                                <form method="POST" action="/referrals/update/{{ referral['id'] }}" class="mini-form" style="margin-top:8px;">
-                                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                                    <div class="field">
-                                                        <label>Status</label>
-                                                        <select name="status">
-                                                            {% for s in referral_statuses %}
-                                                                <option value="{{ s }}" {% if referral["status"] == s %}selected{% endif %}>{{ s|title }}</option>
-                                                            {% endfor %}
-                                                        </select>
-                                                    </div>
-                                                    <div class="field">
-                                                        <label>Assigned to</label>
-                                                        <input name="assigned_to" value="{{ referral['assigned_to'] or '' }}" placeholder="Partner or contact">
-                                                    </div>
-                                                    <div class="field">
-                                                        <label>Expected fee</label>
-                                                        <input name="fee_expected" type="number" value="{{ referral['fee_expected'] or 0 }}">
-                                                    </div>
-                                                    <div class="field">
-                                                        <label>Received fee</label>
-                                                        <input name="fee_received" type="number" value="{{ referral['fee_received'] or 0 }}">
-                                                    </div>
-                                                    <div class="field">
-                                                        <label>Notes</label>
-                                                        <textarea name="notes" placeholder="Referral notes">{{ referral["notes"] or "" }}</textarea>
-                                                    </div>
-                                                    <button type="submit" class="btn-secondary">Update referral</button>
-                                                </form>
-                                                {% endif %}
-                                            </div>
+                                            <div class="date-text">{{ service_labels.get(referral["service_type"], referral["service_type"]) }} · {{ referral["status"]|title }}</div>
                                         {% endfor %}
                                     {% else %}
-                                        <div class="date-text">No services requested</div>
+                                        <div class="date-text">No services</div>
                                     {% endif %}
                                 </td>
-
                                 <td>
-                                    <div class="date-text"><strong>Created:</strong> {{ lead["created_at"] or "-" }}</div>
-                                    <div class="date-text"><strong>Contacted:</strong> {{ lead["contacted_at"] or "-" }}</div>
-                                    <div class="date-text"><strong>Booked:</strong> {{ lead["valuation_booked_at"] or "-" }}</div>
-                                    <div class="date-text"><strong>Next:</strong> {{ lead["next_follow_up_at"] or "-" }}</div>
+                                    <div class="date-text">{{ lead["next_follow_up_at"] or "No task" }}</div>
                                 </td>
-
                                 <td>
-                                    <div class="date-text"><strong>Marketing:</strong> {{ "Yes" if lead["marketing_consent"] else "No" }}</div>
-                                    <div class="date-text"><strong>Retain until:</strong> {{ lead["retention_until"] or "-" }}</div>
-                                    {% if lead["report_token"] %}
-                                        <a class="text-link" href="/reports/{{ lead['report_token'] }}">Report PDF</a>
-                                    {% else %}
-                                        <div class="date-text">No report</div>
-                                    {% endif %}
+                                    <a class="btn btn-primary" href="/leads/{{ lead['id'] }}">Open</a>
                                 </td>
-
-                                <td class="notes-cell">
-                                    {{ lead["notes"] or "-" }}
-                                    {% set lead_notes = notes_by_lead.get(lead["id"], []) %}
-                                    {% if lead_notes %}
-                                        <div style="margin-top:8px;">
-                                            <strong>History</strong>
-                                            {% for note in lead_notes[:3] %}
-                                                <div class="date-text">{{ note["created_at"] }}: {{ note["note"] }}</div>
-                                            {% endfor %}
-                                        </div>
-                                    {% endif %}
-                                    {% set lead_tasks = tasks_by_lead.get(lead["id"], []) %}
-                                    {% if lead_tasks %}
-                                        <div style="margin-top:8px;">
-                                            <strong>Tasks</strong>
-                                            {% for task in lead_tasks[:2] %}
-                                                <div class="date-text">
-                                                    {{ task["title"] }} · {{ task["due_at"] }}
-                                                    {% if not task["completed_at"] and session.role == "agent" %}
-                                                        <form method="POST" action="/leads/tasks/complete/{{ task['id'] }}" style="display:inline;">
-                                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                                            <button type="submit" class="text-link" style="border:none;background:transparent;padding:0;cursor:pointer;">Done</button>
-                                                        </form>
-                                                    {% endif %}
-                                                </div>
-                                            {% endfor %}
-                                        </div>
-                                    {% endif %}
-                                </td>
-
-                                {% if session.role == "agent" %}
-                                <td>
-                                    <div class="action-stack">
-                                        {% if lead["status"] == "new" %}
-                                        <form method="POST" action="/leads/mark-contacted/{{ lead['id'] }}" class="mini-form">
-                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                            <h4>Log contact</h4>
-                                            <div class="field">
-                                                <label>Contacted date</label>
-                                                <input type="date" name="contacted_at" required>
-                                            </div>
-                                            <div class="field">
-                                                <label>Notes</label>
-                                                <textarea name="notes" placeholder="Call outcome, motivation, objections, next step"></textarea>
-                                            </div>
-                                            <button type="submit" class="btn-contacted">Mark contacted</button>
-                                        </form>
-                                        {% endif %}
-
-                                        {% if lead["status"] != "valuation booked" and lead["status"] != "lost" %}
-                                        <form method="POST" action="/leads/book-valuation/{{ lead['id'] }}" class="mini-form">
-                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                            <h4>Book valuation</h4>
-                                            <div class="field">
-                                                <label>Booked date</label>
-                                                <input type="date" name="valuation_booked_at" required>
-                                            </div>
-                                            <div class="field">
-                                                <label>Notes</label>
-                                                <textarea name="notes" placeholder="Appointment details, branch notes, seller context"></textarea>
-                                            </div>
-                                            <button type="submit" class="btn-booked">Book valuation</button>
-                                        </form>
-                                        {% endif %}
-
-                                        <form method="POST" action="/leads/add-note/{{ lead['id'] }}" class="mini-form">
-                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                            <h4>Add note</h4>
-                                            <div class="field">
-                                                <label>Note</label>
-                                                <textarea name="note" placeholder="Add a follow-up note"></textarea>
-                                            </div>
-                                            <button type="submit" class="btn-secondary">Save note</button>
-                                        </form>
-
-                                        <form method="POST" action="/leads/update-status/{{ lead['id'] }}" class="mini-form">
-                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                            <h4>Status</h4>
-                                            <div class="field">
-                                                <label>Move to</label>
-                                                <select name="status">
-                                                    {% for s in lead_statuses %}
-                                                        <option value="{{ s }}" {% if lead["status"] == s %}selected{% endif %}>{{ s|title }}</option>
-                                                    {% endfor %}
-                                                </select>
-                                            </div>
-                                            <button type="submit" class="btn-secondary">Update status</button>
-                                        </form>
-                                    </div>
-                                </td>
-                                {% endif %}
                             </tr>
                             {% endfor %}
                         </table>

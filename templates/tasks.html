@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tasks - equiome</title>
+    <style>
+        * { box-sizing:border-box; }
+        :root { --bg:#f4f7f8; --panel:#fff; --border:#d7dee7; --text:#243342; --muted:#5b6573; --brand:#12344d; --brand2:#2a7f9e; --radius:8px; }
+        body { margin:0; font-family:Arial,sans-serif; background:var(--bg); color:var(--text); }
+        .layout { display:flex; min-height:100vh; }
+        .sidebar { width:240px; background:var(--brand); color:#fff; padding:24px 18px; }
+        .sidebar h2 { margin:0 0 24px; text-transform:lowercase; }
+        .sidebar a { display:block; color:#fff; text-decoration:none; padding:10px 12px; border-radius:var(--radius); margin-bottom:8px; }
+        .sidebar a:hover,.sidebar a.active { background:#194967; }
+        .main { flex:1; padding:24px; }
+        .topbar,.panel { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:18px; margin-bottom:18px; }
+        .topbar { display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap; }
+        h1,h2,h3 { margin-top:0; color:var(--brand); }
+        .tabs { display:flex; gap:8px; flex-wrap:wrap; }
+        .btn,button { display:inline-flex; align-items:center; border:none; border-radius:var(--radius); padding:10px 14px; cursor:pointer; text-decoration:none; font-size:14px; }
+        .btn-primary { background:var(--brand2); color:#fff; }
+        .btn-secondary,button { background:#fff; color:var(--text); border:1px solid var(--border); }
+        table { width:100%; border-collapse:collapse; }
+        th,td { text-align:left; padding:12px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
+        th { color:var(--muted); font-size:12px; }
+        .muted { color:var(--muted); font-size:13px; }
+        @media (max-width:800px) { .layout{display:block;} .sidebar{width:auto;} }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <h2>equiome</h2>
+        <a href="/">Dashboard</a>
+        <a href="/leads">Leads</a>
+        <a href="/referrals">Referrals</a>
+        <a href="/tasks" class="active">Tasks</a>
+        <a href="/epc">EPCHub</a>
+        <a href="/logout">Logout</a>
+    </aside>
+    <main class="main">
+        <div class="topbar">
+            <div>
+                <h1>Tasks</h1>
+                <div class="muted">Daily call and follow-up queue.</div>
+            </div>
+            <div class="tabs">
+                <a class="btn {% if view_filter == 'open' %}btn-primary{% else %}btn-secondary{% endif %}" href="/tasks?view=open">Open</a>
+                <a class="btn {% if view_filter == 'due' %}btn-primary{% else %}btn-secondary{% endif %}" href="/tasks?view=due">Due</a>
+                <a class="btn {% if view_filter == 'completed' %}btn-primary{% else %}btn-secondary{% endif %}" href="/tasks?view=completed">Completed</a>
+            </div>
+        </div>
+
+        <div class="panel">
+            <table>
+                <tr><th>Due</th><th>Task</th><th>Lead</th><th>Contact</th><th>Status</th><th></th></tr>
+                {% for task in tasks %}
+                <tr>
+                    <td>{{ task["due_at"] }}</td>
+                    <td>{{ task["title"] }}</td>
+                    <td>
+                        <strong><a href="/leads/{{ task['lead_id'] }}">{{ task["name"] }}</a></strong>
+                        <div class="muted">{{ task["address"] }}</div>
+                    </td>
+                    <td>{{ task["phone"] }}<br><span class="muted">{{ task["email"] }}</span></td>
+                    <td>{% if task["completed_at"] %}Completed {{ task["completed_at"] }}{% else %}Open{% endif %}</td>
+                    <td>
+                        {% if not task["completed_at"] %}
+                        <form method="POST" action="/leads/tasks/complete/{{ task['id'] }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit">Mark done</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </table>
+            {% if not tasks %}<p class="muted">No tasks found.</p>{% endif %}
+        </div>
+    </main>
+</div>
+</body>
+</html>

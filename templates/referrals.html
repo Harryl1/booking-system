@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Referrals - equiome</title>
+    <style>
+        * { box-sizing:border-box; }
+        :root { --bg:#f4f7f8; --panel:#fff; --border:#d7dee7; --text:#243342; --muted:#5b6573; --brand:#12344d; --brand2:#2a7f9e; --radius:8px; }
+        body { margin:0; font-family:Arial,sans-serif; background:var(--bg); color:var(--text); }
+        .layout { display:flex; min-height:100vh; }
+        .sidebar { width:240px; background:var(--brand); color:#fff; padding:24px 18px; }
+        .sidebar h2 { margin:0 0 24px; text-transform:lowercase; }
+        .sidebar a { display:block; color:#fff; text-decoration:none; padding:10px 12px; border-radius:var(--radius); margin-bottom:8px; }
+        .sidebar a:hover,.sidebar a.active { background:#194967; }
+        .main { flex:1; padding:24px; }
+        .topbar,.panel { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:18px; margin-bottom:18px; }
+        .topbar { display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap; }
+        h1,h2,h3 { margin-top:0; color:var(--brand); }
+        .filters { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; align-items:end; }
+        input,select,textarea { width:100%; border:1px solid var(--border); border-radius:var(--radius); padding:10px 12px; font-size:14px; }
+        textarea { min-height:70px; }
+        label { display:block; font-weight:bold; font-size:13px; margin-bottom:6px; }
+        .btn,button { display:inline-flex; align-items:center; border:none; border-radius:var(--radius); padding:10px 14px; cursor:pointer; text-decoration:none; font-size:14px; }
+        .btn-primary { background:var(--brand2); color:#fff; }
+        .btn-secondary,button { background:#fff; color:var(--text); border:1px solid var(--border); }
+        table { width:100%; border-collapse:collapse; }
+        th,td { text-align:left; padding:12px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
+        th { color:var(--muted); font-size:12px; }
+        .muted { color:var(--muted); font-size:13px; }
+        .badge { display:inline-block; padding:5px 10px; border-radius:999px; background:#eaf4f8; color:var(--brand); font-weight:bold; font-size:12px; }
+        @media (max-width:800px) { .layout{display:block;} .sidebar{width:auto;} }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <h2>equiome</h2>
+        <a href="/">Dashboard</a>
+        <a href="/leads">Leads</a>
+        <a href="/referrals" class="active">Referrals</a>
+        <a href="/tasks">Tasks</a>
+        <a href="/epc">EPCHub</a>
+        <a href="/logout">Logout</a>
+    </aside>
+    <main class="main">
+        <div class="topbar">
+            <div>
+                <h1>Service Referrals</h1>
+                <div class="muted">Track valuation, EPC, solicitor, and mortgage opportunities.</div>
+            </div>
+            <a class="btn btn-secondary" href="/leads/export.csv">Export CSV</a>
+        </div>
+
+        <div class="panel">
+            <form method="GET" class="filters">
+                <div>
+                    <label>Status</label>
+                    <select name="status">
+                        <option value="all" {% if status_filter == "all" %}selected{% endif %}>All statuses</option>
+                        {% for s in referral_statuses %}
+                            <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s|title }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label>Service</label>
+                    <select name="service">
+                        <option value="all" {% if service_filter == "all" %}selected{% endif %}>All services</option>
+                        {% for service in service_types %}
+                            <option value="{{ service }}" {% if service_filter == service %}selected{% endif %}>{{ service_labels.get(service, service) }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit" class="btn-primary">Apply</button>
+            </form>
+        </div>
+
+        <div class="panel">
+            <table>
+                <tr><th>Lead</th><th>Service</th><th>Status</th><th>Assigned</th><th>Fees</th><th>Update</th></tr>
+                {% for referral in referrals %}
+                <tr>
+                    <td>
+                        <strong><a href="/leads/{{ referral['lead_id'] }}">{{ referral["name"] }}</a></strong>
+                        <div class="muted">{{ referral["phone"] }} · {{ referral["email"] }}</div>
+                        <div class="muted">{{ referral["address"] }}</div>
+                    </td>
+                    <td>{{ service_labels.get(referral["service_type"], referral["service_type"]) }}</td>
+                    <td><span class="badge">{{ referral["status"]|title }}</span></td>
+                    <td>{{ referral["assigned_to"] or "-" }}</td>
+                    <td>£{{ referral["fee_received"] }} / £{{ referral["fee_expected"] }}</td>
+                    <td>
+                        <form method="POST" action="/referrals/update/{{ referral['id'] }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <select name="status">
+                                {% for s in referral_statuses %}
+                                    <option value="{{ s }}" {% if referral["status"] == s %}selected{% endif %}>{{ s|title }}</option>
+                                {% endfor %}
+                            </select>
+                            <input name="assigned_to" value="{{ referral['assigned_to'] or '' }}" placeholder="Assigned to">
+                            <input name="fee_expected" type="number" value="{{ referral['fee_expected'] or 0 }}">
+                            <input name="fee_received" type="number" value="{{ referral['fee_received'] or 0 }}">
+                            <textarea name="notes" placeholder="Referral notes">{{ referral["notes"] or "" }}</textarea>
+                            <button type="submit">Save</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </table>
+            {% if not referrals %}<p class="muted">No referrals found.</p>{% endif %}
+        </div>
+    </main>
+</div>
+</body>
+</html>
