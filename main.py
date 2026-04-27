@@ -966,10 +966,10 @@ def organisation_for_address(db, address):
         territory = db.execute("""
             SELECT organisation_id
             FROM branch_territories
-            WHERE ? LIKE postcode_prefix || '%'
+            WHERE ? LIKE postcode_prefix || ?
             ORDER BY LENGTH(postcode_prefix) DESC
             LIMIT 1
-        """, (prefix,)).fetchone()
+        """, (prefix, "%")).fetchone()
         if territory:
             return territory["organisation_id"]
     return default_organisation_id(db)
@@ -1016,8 +1016,8 @@ def cleanup_expired_leads():
         FROM leads
         WHERE retention_until IS NOT NULL
           AND retention_until < ?
-          AND email NOT LIKE 'deleted+%@local'
-    """, (today,)).fetchall()
+          AND email NOT LIKE ?
+    """, (today, "deleted+%@local")).fetchall()
 
     for lead in expired:
         if lead["report_filename"]:
