@@ -81,7 +81,7 @@
             <div class="panel"><div class="muted">Lead score</div><div class="metric">{{ lead["lead_score"] or 0 }}/100</div></div>
             <div class="panel"><div class="muted">Estimated value</div><div class="metric">£{{ lead["valuation"] or 0 }}</div></div>
             <div class="panel"><div class="muted">Source</div><div class="metric">{{ lead["source"]|replace("_", " ")|title }}</div></div>
-            <div class="panel"><div class="muted">Retain until</div><div class="metric">{{ lead["retention_until"] or "-" }}</div></div>
+            <div class="panel"><div class="muted">Selling timeframe</div><div class="metric">{{ lead["selling_timeframe"] or "-" }}</div></div>
         </div>
 
         <div class="workspace">
@@ -157,6 +157,7 @@
                     <p><strong>Phone:</strong> <a href="tel:{{ lead['phone'] }}">{{ lead["phone"] }}</a></p>
                     <p><strong>Email:</strong> <a href="mailto:{{ lead['email'] }}">{{ lead["email"] }}</a></p>
                     <p><strong>Campaign:</strong> {{ lead["utm_campaign"] or "-" }}</p>
+                    <p><strong>Retain until:</strong> {{ lead["retention_until"] or "-" }}</p>
                     <p><strong>Privacy accepted:</strong> {{ lead["privacy_notice_accepted_at"] or "-" }}</p>
                     <p><strong>Referral sharing consent:</strong> {{ lead["referral_consent_accepted_at"] or "Not captured" }}</p>
                     <p><strong>Referral fee disclosure:</strong> {{ lead["referral_fee_disclosure_accepted_at"] or "Not captured" }}</p>

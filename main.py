@@ -148,6 +148,7 @@ VALID_LEAD_STATUSES = {
     LEAD_STATUS_LOST,
 }
 VALID_PROPERTY_TYPES = {"flat", "terraced", "semi detached", "detached"}
+VALID_SELLING_TIMEFRAMES = {"0-3 months", "3-6 months", "6-9 months", "9-12 months", "just exploring", ""}
 SERVICE_VALUATION = "valuation"
 SERVICE_EPC = "epc"
 SERVICE_SOLICITOR = "solicitor"
@@ -382,6 +383,7 @@ def init_db():
                 utm_source TEXT,
                 utm_medium TEXT,
                 utm_campaign TEXT,
+                selling_timeframe TEXT,
                 lead_score INTEGER NOT NULL DEFAULT 0,
                 next_follow_up_at TEXT,
                 organisation_id INTEGER REFERENCES organisations (id)
@@ -514,6 +516,7 @@ def init_db():
             utm_source TEXT,
             utm_medium TEXT,
             utm_campaign TEXT,
+            selling_timeframe TEXT,
             lead_score INTEGER NOT NULL DEFAULT 0,
             next_follow_up_at TEXT,
             organisation_id INTEGER,
@@ -617,6 +620,7 @@ def ensure_lead_action_columns():
         "utm_source": "TEXT",
         "utm_medium": "TEXT",
         "utm_campaign": "TEXT",
+        "selling_timeframe": "TEXT",
         "lead_score": "INTEGER NOT NULL DEFAULT 0",
         "next_follow_up_at": "TEXT",
     }
@@ -818,7 +822,7 @@ def calculate_lead_score(data, marketing_consent=False):
         score += 10
     if data.get("phone"):
         score += 10
-    requested_services = normalise_requested_services(data.get("help_requested"))
+    requested_services = normalise_requested_services(data.get("help_requested") or data.get("selected_services"))
     if requested_services:
         score += min(len(requested_services) * 10, 30)
     if to_float(data.get("net_proceeds", 0)) > 50000:
@@ -827,6 +831,15 @@ def calculate_lead_score(data, marketing_consent=False):
         score += 10
     if data.get("plan") == "buy":
         score += 10
+    selling_timeframe = (data.get("selling_timeframe") or "").strip().lower()
+    timeframe_scores = {
+        "0-3 months": 30,
+        "3-6 months": 20,
+        "6-9 months": 10,
+        "9-12 months": 5,
+        "just exploring": 0,
+    }
+    score += timeframe_scores.get(selling_timeframe, 0)
     return min(score, 100)
 
 
@@ -839,6 +852,8 @@ def lead_score_factors(lead, referrals=None):
         factors.append("Phone number supplied")
     if referrals:
         factors.append(f"{len(referrals)} service interest(s) requested")
+    if lead["selling_timeframe"]:
+        factors.append(f"Selling timeframe: {lead['selling_timeframe']}")
     if to_float(lead["valuation"], 0) >= 250000:
         factors.append("Material property value")
     if (lead["lead_score"] or 0) >= 60:
@@ -854,6 +869,8 @@ def best_next_action(lead, tasks=None, referrals=None):
     open_tasks = [task for task in tasks if not task["completed_at"]]
     if open_tasks:
         return f"Complete task: {open_tasks[0]['title']}"
+    if lead["status"] == LEAD_STATUS_NEW and lead["selling_timeframe"] == "0-3 months":
+        return "Call immediately: seller says they may move within 0-3 months"
     if lead["status"] == LEAD_STATUS_NEW:
         return "Call the lead and qualify their moving timeline"
     if lead["status"] == LEAD_STATUS_CONTACTED:
@@ -951,7 +968,7 @@ def send_email(to_address, subject, body):
     return True
 
 
-def notify_new_lead(lead_id, name, email, phone, address, lead_score):
+def notify_new_lead(lead_id, name, email, phone, address, lead_score, selling_timeframe=""):
     if not LEAD_NOTIFICATION_EMAIL:
         return
     body = (
@@ -960,6 +977,7 @@ def notify_new_lead(lead_id, name, email, phone, address, lead_score):
         f"Email: {email}\n"
         f"Phone: {phone}\n"
         f"Address: {address}\n"
+        f"Selling timeframe: {selling_timeframe or 'Not supplied'}\n"
         f"Lead score: {lead_score}/100\n\n"
         f"Recommended action: call and qualify the seller while the enquiry is fresh.\n\n"
         f"Open lead: {APP_BASE_URL}/leads/{lead_id}\n"
@@ -1186,6 +1204,22 @@ def validate_lead_status(status):
     if status not in VALID_LEAD_STATUSES:
         abort(400, "Invalid lead status")
     return status
+
+
+def validate_selling_timeframe(value):
+    value = (value or "").strip().lower()
+    labels = {
+        "0-3 months": "0-3 months",
+        "3-6 months": "3-6 months",
+        "6-9 months": "6-9 months",
+        "9-12 months": "9-12 months",
+        "just exploring": "Just exploring",
+        "exploring": "Just exploring",
+        "": "",
+    }
+    if value not in labels:
+        abort(400, "Invalid selling timeframe")
+    return labels[value]
 
 
 def calculate_price(property_type, bedrooms):
@@ -2135,7 +2169,7 @@ def export_leads_csv():
     where_sql, params = scoped_lead_where()
     rows = db.execute(f"""
         SELECT id, name, email, phone, address, valuation, source, utm_source,
-               utm_medium, utm_campaign, status, lead_stage, lead_score,
+               utm_medium, utm_campaign, selling_timeframe, status, lead_stage, lead_score,
                marketing_consent, referral_consent_accepted_at, referral_fee_disclosure_accepted_at,
                created_at, next_follow_up_at, retention_until,
                (
@@ -2153,7 +2187,7 @@ def export_leads_csv():
     writer = csv.writer(output)
     writer.writerow([
         "id", "name", "email", "phone", "address", "valuation", "source",
-        "utm_source", "utm_medium", "utm_campaign", "status", "lead_stage",
+        "utm_source", "utm_medium", "utm_campaign", "selling_timeframe", "status", "lead_stage",
         "lead_score", "marketing_consent", "referral_consent_accepted_at",
         "referral_fee_disclosure_accepted_at", "created_at", "next_follow_up_at",
         "retention_until", "referrals",
@@ -2984,6 +3018,7 @@ def create_lead_report(data):
         "borrowing_power": to_float(data.get("borrowing_power", 0)),
         "max_budget": to_float(data.get("max_budget", 0)),
         "monthly_payment_estimate": to_float(data.get("monthly_payment_estimate", 0)),
+        "selling_timeframe": data.get("selling_timeframe") or "Not supplied",
         "recommendation": data.get("recommendation") or "No recommendation available.",
         "selected_services": selected_services,
     }
@@ -3008,6 +3043,7 @@ def save_lead_payload(data, create_report=False):
     utm_source = (data.get("utm_source") or "").strip()
     utm_medium = (data.get("utm_medium") or "").strip()
     utm_campaign = (data.get("utm_campaign") or "").strip()
+    selling_timeframe = validate_selling_timeframe(data.get("selling_timeframe"))
     created_at = data.get("created_at") or datetime.now().isoformat()
     notes = (data.get("notes") or "").strip()
     requested_services = normalise_requested_services(data.get("help_requested") or data.get("selected_services"))
@@ -3069,9 +3105,9 @@ def save_lead_payload(data, create_report=False):
                 assigned_agent_id, report_filename, report_token, report_expires_at,
                 marketing_consent, privacy_notice_accepted_at,
                 referral_consent_accepted_at, referral_fee_disclosure_accepted_at, retention_until,
-                source_page, utm_source, utm_medium, utm_campaign, lead_score, next_follow_up_at,
+                source_page, utm_source, utm_medium, utm_campaign, selling_timeframe, lead_score, next_follow_up_at,
                 organisation_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             name,
             email,
@@ -3098,6 +3134,7 @@ def save_lead_payload(data, create_report=False):
             utm_source,
             utm_medium,
             utm_campaign,
+            selling_timeframe,
             lead_score,
             (datetime.now() + timedelta(days=1)).isoformat(),
             organisation_id,
@@ -3137,7 +3174,7 @@ def save_lead_payload(data, create_report=False):
             response["pdf_url"] = f"/reports/{report_token}"
             response["report_expires_at"] = report_expires_at
             send_customer_confirmation(email, request.host_url.rstrip("/") + response["pdf_url"])
-        notify_new_lead(lead_id, name, email, phone, address, lead_score)
+        notify_new_lead(lead_id, name, email, phone, address, lead_score, selling_timeframe)
         return jsonify(response)
 
     except Exception as error:

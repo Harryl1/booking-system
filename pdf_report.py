@@ -12,8 +12,7 @@ from reportlab.platypus import (
     Table,
     TableStyle,
     HRFlowable,
-    Image,
-    PageBreak
+    Image
 )
 
 # ==========================================
@@ -560,6 +559,12 @@ def generate_pdf_report(report_data, filepath, logo_path=None):
             styles,
             content_width
         ),
+        detail_row(
+            "Selling timeframe",
+            safe_text(report_data.get("selling_timeframe"), "Not supplied"),
+            styles,
+            content_width
+        ),
     ]
 
     assumptions_box = boxed_section(
@@ -571,7 +576,7 @@ def generate_pdf_report(report_data, filepath, logo_path=None):
     story.append(assumptions_box)
 
     if selected_services:
-        story.append(Spacer(1, 16))
+        story.append(Spacer(1, 10))
         service_lines = [Paragraph("You asked to hear about:", styles["Body"])]
         for service in selected_services:
             service_lines.append(Paragraph(f"• {safe_text(service)}", styles["Body"]))
@@ -588,14 +593,13 @@ def generate_pdf_report(report_data, filepath, logo_path=None):
         Paragraph("<b>Ready to confirm your numbers?</b>", styles["Body"]),
         Paragraph("A local valuation and mortgage review will help turn these indicative figures into a clearer moving plan.", styles["Body"]),
     ]
-    story.append(Spacer(1, 16))
+    story.append(Spacer(1, 10))
     story.append(boxed_section("Recommended follow-up", cta_lines, styles, content_width))
 
     # ------------------------------------------
-    # Page 2 – Guidance & next steps
+    # Guidance & next steps
     # ------------------------------------------
-    story.append(PageBreak())
-
+    story.append(Spacer(1, 12))
     story.append(Paragraph("What this means for you", styles["SectionHeading"]))
     story.append(Paragraph(
         "Based on your estimated equity and borrowing position, this report gives an "
@@ -603,7 +607,7 @@ def generate_pdf_report(report_data, filepath, logo_path=None):
         "to help you understand your position before speaking to an agent or mortgage advisor.",
         styles["Body"]
     ))
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 6))
 
     story.append(Paragraph("Understanding your numbers", styles["SectionHeading"]))
 
@@ -633,9 +637,9 @@ def generate_pdf_report(report_data, filepath, logo_path=None):
 
     for item in explain_items:
         story.append(item)
-        story.append(Spacer(1, 6))
+        story.append(Spacer(1, 3))
 
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 6))
     story.append(Paragraph("Next steps", styles["SectionHeading"]))
 
     next_steps = []
@@ -646,6 +650,8 @@ def generate_pdf_report(report_data, filepath, logo_path=None):
         next_steps.append("Speak to a mortgage advisor to confirm your borrowing range and monthly costs.")
     if "Conveyancing quote" in selected_services:
         next_steps.append("Request a conveyancing quote so you can compare likely moving costs more accurately.")
+    if "EPC assessment" in selected_services:
+        next_steps.append("Arrange an EPC assessment if you are preparing to sell or let the property.")
 
     if not next_steps:
         next_steps = [
@@ -657,14 +663,14 @@ def generate_pdf_report(report_data, filepath, logo_path=None):
         story.append(Paragraph(f"• {step}", styles["Body"]))
         story.append(Spacer(1, 4))
 
-    story.append(Spacer(1, 16))
+    story.append(Spacer(1, 8))
     story.append(Paragraph(
         "If you would like help reviewing your options or taking the next step, "
         "you can request a call and we’ll guide you through your specific situation.",
         styles["Body"]
     ))
 
-    story.append(Spacer(1, 18))
+    story.append(Spacer(1, 10))
     story.append(HRFlowable(width="100%", thickness=0.6, color=BRAND["border"]))
     story.append(Spacer(1, 6))
     story.append(Paragraph(
