@@ -27,6 +27,7 @@
 
 ## Website checks
 
+- Check `/privacy` and `/agent-terms`, then replace draft wording with solicitor-approved text.
 - Complete the full user flow on desktop and mobile.
 - Confirm every submitted lead appears in `/leads`.
 - Confirm the PDF link opens and expires according to retention policy.
@@ -39,4 +40,6 @@
 - Confirm agents can update statuses, add notes, and complete tasks.
 - Confirm CSV export works for reporting.
 - Review the report disclaimer before launch.
+- Confirm `ENABLE_TEST_TOOLS` is unset or set to `0` in production.
+- Confirm `/admin/system` has no critical missing production settings except planned Postgres migration during pilot.
 - Run 5-10 dummy leads through the live site before public launch.

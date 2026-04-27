@@ -44,6 +44,8 @@ REPORT_RETENTION_DAYS = int(os.environ.get("REPORT_RETENTION_DAYS", "30"))
 LEAD_RETENTION_DAYS = int(os.environ.get("LEAD_RETENTION_DAYS", "365"))
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "*")
 PRIVACY_NOTICE_URL = os.environ.get("PRIVACY_NOTICE_URL", "")
+AGENT_TERMS_URL = os.environ.get("AGENT_TERMS_URL", "")
+ENABLE_TEST_TOOLS = os.environ.get("ENABLE_TEST_TOOLS", "0") == "1"
 RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "60"))
 RATE_LIMIT_MAX_REQUESTS = int(os.environ.get("RATE_LIMIT_MAX_REQUESTS", "30"))
 LEAD_NOTIFICATION_EMAIL = os.environ.get("LEAD_NOTIFICATION_EMAIL", "")
@@ -995,6 +997,20 @@ def logout():
     return redirect("/login")
 
 
+@app.get("/privacy")
+def privacy_notice():
+    return render_template(
+        "privacy.html",
+        retention_days=LEAD_RETENTION_DAYS,
+        report_retention_days=REPORT_RETENTION_DAYS,
+    )
+
+
+@app.get("/agent-terms")
+def agent_terms():
+    return render_template("agent_terms.html")
+
+
 # -----------------------
 # AgencyHub Dashboard
 # -----------------------
@@ -1308,6 +1324,7 @@ def leads():
         referrals_by_lead=referrals_by_lead,
         service_labels=SERVICE_LABELS,
         referral_statuses=list(VALID_REFERRAL_STATUSES),
+        enable_test_tools=ENABLE_TEST_TOOLS,
         csrf_token=get_csrf_token()
     )
 
@@ -1516,6 +1533,8 @@ def book_valuation(lead_id):
 @login_required
 @role_required(ROLE_AGENT)
 def add_test_lead():
+    if not ENABLE_TEST_TOOLS:
+        abort(404)
     validate_csrf()
 
     db = get_db()
@@ -1962,6 +1981,8 @@ def system_readiness():
         ("INTERNAL_API_TOKEN set", bool(INTERNAL_API_TOKEN)),
         ("SESSION_COOKIE_SECURE enabled", app.config["SESSION_COOKIE_SECURE"]),
         ("FRONTEND_ORIGIN restricted", FRONTEND_ORIGIN != "*"),
+        ("Privacy notice route available", True),
+        ("Test tools disabled", not ENABLE_TEST_TOOLS),
         ("SMTP configured", bool(SMTP_HOST and CUSTOMER_EMAIL_FROM)),
         ("Using managed database", bool(os.environ.get("DATABASE_URL"))),
     ]
