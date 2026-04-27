@@ -27,6 +27,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from pdf_report import generate_pdf_report
 from property_tool import calculate_property_decision, get_real_valuation, to_float
 
+try:
+    import psycopg
+except ImportError:
+    psycopg = None
+
 app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORTS_DIR = os.path.join(BASE_DIR, "Generated_reports")
@@ -46,6 +51,7 @@ app.config["SESSION_COOKIE_SECURE"] = os.environ.get(
 ) == "1"
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
 
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 DB_PATH = os.environ.get("DB_PATH", os.path.join(BASE_DIR, "bookings.db"))
 INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN", "")
 REPORT_RETENTION_DAYS = int(os.environ.get("REPORT_RETENTION_DAYS", "30"))
@@ -186,11 +192,120 @@ VALID_REFERRAL_STATUSES = {
 # -----------------------
 # Database
 # -----------------------
+class CompatRow(dict):
+    def __init__(self, columns, values):
+        super().__init__(zip(columns, values))
+        self._columns = list(columns)
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return super().__getitem__(self._columns[key])
+        return super().__getitem__(key)
+
+
+class PostgresCursor:
+    def __init__(self, cursor):
+        self.cursor = cursor
+        self._columns = [
+            getattr(column, "name", column[0])
+            for column in cursor.description
+        ] if cursor.description else []
+
+    @property
+    def rowcount(self):
+        return self.cursor.rowcount
+
+    @property
+    def lastrowid(self):
+        row = self.fetchone()
+        return row["id"] if row and "id" in row else None
+
+    def fetchone(self):
+        row = self.cursor.fetchone()
+        if row is None:
+            return None
+        return CompatRow(self._columns, row)
+
+    def fetchall(self):
+        return [CompatRow(self._columns, row) for row in self.cursor.fetchall()]
+
+
+class PostgresConnection:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def execute(self, sql, params=()):
+        sql = to_postgres_sql(sql)
+        cursor = self.connection.execute(sql, tuple(params or ()))
+        return PostgresCursor(cursor)
+
+    def commit(self):
+        self.connection.commit()
+
+    def rollback(self):
+        self.connection.rollback()
+
+    def close(self):
+        self.connection.close()
+
+
+def using_postgres():
+    return bool(DATABASE_URL)
+
+
+def is_integrity_error(error):
+    if isinstance(error, sqlite3.IntegrityError):
+        return True
+    return psycopg is not None and isinstance(error, psycopg.IntegrityError)
+
+
+def to_postgres_sql(sql):
+    converted = sql.strip()
+    converted = converted.replace("INSERT OR IGNORE INTO", "INSERT INTO")
+    converted = converted.replace("GROUP_CONCAT(service_type || ':' || status, '; ')", "STRING_AGG(service_type || ':' || status, '; ')")
+    converted = converted.replace("rowid DESC", "id DESC")
+    converted = converted.replace("?", "%s")
+
+    lower_sql = converted.lower()
+    if lower_sql.startswith("insert into service_referrals") and "on conflict" not in lower_sql:
+        converted += " ON CONFLICT (lead_id, service_type) DO NOTHING"
+    if lower_sql.startswith("insert into branch_territories") and "on conflict" not in lower_sql:
+        converted += " ON CONFLICT (organisation_id, postcode_prefix) DO NOTHING"
+    if (
+        (lower_sql.startswith("insert into leads") or lower_sql.startswith("insert into organisations"))
+        and "returning" not in lower_sql
+        and "on conflict" not in lower_sql
+    ):
+        converted += " RETURNING id"
+
+    return converted
+
+
+def table_columns(db, table_name):
+    if using_postgres():
+        rows = db.execute("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = %s
+        """, (table_name,)).fetchall()
+        return {row["column_name"] for row in rows}
+
+    return {
+        row["name"]
+        for row in db.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+
+
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
+        if using_postgres():
+            if psycopg is None:
+                raise RuntimeError("DATABASE_URL is set, but psycopg is not installed")
+            g.db = PostgresConnection(psycopg.connect(DATABASE_URL))
+        else:
+            g.db = sqlite3.connect(DB_PATH)
+            g.db.row_factory = sqlite3.Row
+            g.db.execute("PRAGMA foreign_keys = ON")
     return g.db
 
 
@@ -203,6 +318,139 @@ def close_db(exception=None):
 
 def init_db():
     db = get_db()
+
+    if using_postgres():
+        postgres_statements = [
+            """
+            CREATE TABLE IF NOT EXISTS organisations (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                subscription_plan TEXT NOT NULL DEFAULT 'starter',
+                billing_status TEXT NOT NULL DEFAULT 'trial',
+                lead_allowance INTEGER NOT NULL DEFAULT 50,
+                trial_ends_at TEXT,
+                created_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                role TEXT NOT NULL,
+                organisation_id INTEGER REFERENCES organisations (id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS branch_territories (
+                id SERIAL PRIMARY KEY,
+                organisation_id INTEGER NOT NULL REFERENCES organisations (id),
+                label TEXT NOT NULL,
+                postcode_prefix TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE (organisation_id, postcode_prefix)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS leads (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL,
+                phone TEXT NOT NULL,
+                address TEXT NOT NULL,
+                valuation INTEGER NOT NULL,
+                source TEXT NOT NULL DEFAULT 'website',
+                status TEXT NOT NULL DEFAULT 'new',
+                created_at TEXT NOT NULL,
+                contacted_at TEXT,
+                valuation_booked_at TEXT,
+                notes TEXT,
+                lead_stage TEXT,
+                is_hot_lead INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT,
+                assigned_agent_id INTEGER REFERENCES users (id),
+                report_filename TEXT,
+                report_token TEXT,
+                report_expires_at TEXT,
+                marketing_consent INTEGER NOT NULL DEFAULT 0,
+                privacy_notice_accepted_at TEXT,
+                retention_until TEXT,
+                source_page TEXT,
+                utm_source TEXT,
+                utm_medium TEXT,
+                utm_campaign TEXT,
+                lead_score INTEGER NOT NULL DEFAULT 0,
+                next_follow_up_at TEXT,
+                organisation_id INTEGER REFERENCES organisations (id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS lead_notes (
+                id SERIAL PRIMARY KEY,
+                lead_id INTEGER NOT NULL REFERENCES leads (id),
+                user_id INTEGER REFERENCES users (id),
+                note TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS lead_tasks (
+                id SERIAL PRIMARY KEY,
+                lead_id INTEGER NOT NULL REFERENCES leads (id),
+                user_id INTEGER REFERENCES users (id),
+                title TEXT NOT NULL,
+                due_at TEXT NOT NULL,
+                completed_at TEXT,
+                created_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users (id),
+                action TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT,
+                created_at TEXT NOT NULL,
+                ip_address TEXT
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS service_referrals (
+                id SERIAL PRIMARY KEY,
+                lead_id INTEGER NOT NULL REFERENCES leads (id),
+                service_type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'new',
+                assigned_to TEXT,
+                referred_at TEXT,
+                completed_at TEXT,
+                fee_expected INTEGER NOT NULL DEFAULT 0,
+                fee_received INTEGER NOT NULL DEFAULT 0,
+                notes TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT,
+                UNIQUE (lead_id, service_type)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS bookings (
+                id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users (id),
+                agent_name TEXT NOT NULL,
+                address TEXT NOT NULL,
+                property_type TEXT NOT NULL,
+                bedrooms INTEGER NOT NULL,
+                preferred_date TEXT NOT NULL,
+                price INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                assigned_assessor_id INTEGER REFERENCES users (id)
+            )
+            """,
+        ]
+        for statement in postgres_statements:
+            db.execute(statement)
+        db.commit()
+        return
 
     db.executescript("""
         CREATE TABLE IF NOT EXISTS users (
@@ -338,10 +586,7 @@ def init_db():
 def ensure_lead_action_columns():
     db = get_db()
 
-    existing_columns = {
-        row["name"]
-        for row in db.execute("PRAGMA table_info(leads)").fetchall()
-    }
+    existing_columns = table_columns(db, "leads")
 
     if "lead_stage" not in existing_columns:
         db.execute("ALTER TABLE leads ADD COLUMN lead_stage TEXT")
@@ -373,10 +618,7 @@ def ensure_lead_action_columns():
         if column_name not in existing_columns:
             db.execute(f"ALTER TABLE leads ADD COLUMN {column_name} {column_definition}")
 
-    user_columns = {
-        row["name"]
-        for row in db.execute("PRAGMA table_info(users)").fetchall()
-    }
+    user_columns = table_columns(db, "users")
     if "organisation_id" not in user_columns:
         db.execute("ALTER TABLE users ADD COLUMN organisation_id INTEGER")
 
@@ -980,7 +1222,10 @@ def register():
                 (username, hashed_password, role, organisation_id)
             )
             db.commit()
-        except sqlite3.IntegrityError:
+        except Exception as error:
+            db.rollback()
+            if not is_integrity_error(error):
+                raise
             return "User already exists", 400
 
         return redirect("/login")
