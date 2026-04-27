@@ -57,6 +57,7 @@ INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN", "")
 REPORT_RETENTION_DAYS = int(os.environ.get("REPORT_RETENTION_DAYS", "30"))
 LEAD_RETENTION_DAYS = int(os.environ.get("LEAD_RETENTION_DAYS", "365"))
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "*")
+APP_BASE_URL = os.environ.get("APP_BASE_URL", "https://booking-system-b13f.onrender.com")
 PRIVACY_NOTICE_URL = os.environ.get("PRIVACY_NOTICE_URL", "")
 AGENT_TERMS_URL = os.environ.get("AGENT_TERMS_URL", "")
 ENABLE_TEST_TOOLS = os.environ.get("ENABLE_TEST_TOOLS", "0") == "1"
@@ -823,6 +824,54 @@ def calculate_lead_score(data, marketing_consent=False):
     return min(score, 100)
 
 
+def lead_score_factors(lead, referrals=None):
+    referrals = referrals or []
+    factors = []
+    if lead["marketing_consent"]:
+        factors.append("Marketing consent captured")
+    if lead["phone"]:
+        factors.append("Phone number supplied")
+    if referrals:
+        factors.append(f"{len(referrals)} service interest(s) requested")
+    if to_float(lead["valuation"], 0) >= 250000:
+        factors.append("Material property value")
+    if (lead["lead_score"] or 0) >= 60:
+        factors.append("High-priority lead score")
+    if not factors:
+        factors.append("Basic contact details captured")
+    return factors
+
+
+def best_next_action(lead, tasks=None, referrals=None):
+    tasks = tasks or []
+    referrals = referrals or []
+    open_tasks = [task for task in tasks if not task["completed_at"]]
+    if open_tasks:
+        return f"Complete task: {open_tasks[0]['title']}"
+    if lead["status"] == LEAD_STATUS_NEW:
+        return "Call the lead and qualify their moving timeline"
+    if lead["status"] == LEAD_STATUS_CONTACTED:
+        return "Book a valuation appointment or mark the next follow-up"
+    if lead["status"] in {LEAD_STATUS_VALUATION_BOOKED, LEAD_STATUS_APPOINTMENT_BOOKED}:
+        return "Prepare valuation notes and confirm referral opportunities"
+    if referrals:
+        return "Review open service referrals and update fee status"
+    if lead["status"] == LEAD_STATUS_WON:
+        return "Record revenue and keep referral follow-up current"
+    if lead["status"] == LEAD_STATUS_LOST:
+        return "Add loss reason and close remaining tasks"
+    return "Add a note with the latest outcome"
+
+
+def contact_priority_label(lead):
+    score = lead["lead_score"] or 0
+    if score >= 70:
+        return "Hot"
+    if score >= 45:
+        return "Warm"
+    return "New"
+
+
 def normalise_service_type(service):
     service_key = (service or "").strip().lower()
     return SERVICE_ALIASES.get(service_key)
@@ -906,7 +955,9 @@ def notify_new_lead(lead_id, name, email, phone, address, lead_score):
         f"Phone: {phone}\n"
         f"Address: {address}\n"
         f"Lead score: {lead_score}/100\n\n"
-        f"Open leads: https://booking-system-b13f.onrender.com/leads"
+        f"Recommended action: call and qualify the seller while the enquiry is fresh.\n\n"
+        f"Open lead: {APP_BASE_URL}/leads/{lead_id}\n"
+        f"Open leads: {APP_BASE_URL}/leads"
     )
     try:
         send_email(LEAD_NOTIFICATION_EMAIL, f"New property lead: {name}", body)
@@ -920,6 +971,7 @@ def send_customer_confirmation(email, report_url):
     body = (
         "Thanks for using the Equiome property tool.\n\n"
         f"Your personalised report is ready here:\n{report_url}\n\n"
+        "A local property expert can help confirm your valuation range and next steps.\n\n"
         "This report is an indicative estimate only and is not financial, mortgage, or legal advice."
     )
     try:
@@ -1655,6 +1707,9 @@ def lead_detail(lead_id):
         notes=notes,
         tasks=tasks,
         referrals=referrals,
+        next_action=best_next_action(lead, tasks, referrals),
+        score_factors=lead_score_factors(lead, referrals),
+        priority_label=contact_priority_label(lead),
         lead_statuses=list(VALID_LEAD_STATUSES),
         referral_statuses=list(VALID_REFERRAL_STATUSES),
         service_labels=SERVICE_LABELS,
@@ -1904,6 +1959,39 @@ def add_note_to_lead(lead_id):
     db.commit()
     write_audit_log("added_note", "lead", lead_id)
     return redirect("/leads")
+
+
+@app.route("/leads/add-task/<int:lead_id>", methods=["POST"])
+@login_required
+@role_required(ROLE_AGENT)
+def add_task_to_lead(lead_id):
+    validate_csrf()
+    title = validate_required_text(request.form.get("title"), "task", max_length=255)
+    due_date = request.form.get("due_date") or ""
+    due_time = request.form.get("due_time") or "09:00"
+    if due_date:
+        validate_date(due_date, "due date")
+        due_at = f"{due_date}T{due_time}"
+    else:
+        due_at = (datetime.now() + timedelta(days=1)).isoformat()
+
+    db = get_db()
+    scope_clause, scope_params = agent_lead_clause("")
+    where_sql = "id = ?"
+    params = [lead_id]
+    if scope_clause:
+        where_sql += f" AND {scope_clause}"
+        params.extend(scope_params)
+
+    lead = db.execute(f"SELECT id FROM leads WHERE {where_sql}", tuple(params)).fetchone()
+    if lead is None:
+        abort(404, "Lead not found")
+
+    create_follow_up_task(lead_id, title, due_at=due_at, user_id=session.get("user_id"))
+    add_lead_note(lead_id, f"Task added: {title}")
+    db.commit()
+    write_audit_log("added_task", "lead", lead_id)
+    return redirect(f"/leads/{lead_id}")
 
 
 @app.route("/referrals/update/<int:referral_id>", methods=["POST"])
@@ -2218,6 +2306,28 @@ def admin_dashboard():
         WHERE {task_where}
     """, tuple(task_query_params)).fetchone()[0]
 
+    won_leads = db.execute(
+        f"SELECT COUNT(*) FROM leads {lead_where + (' AND ' if lead_where else 'WHERE ')}status = ?",
+        tuple([*lead_params, LEAD_STATUS_WON])
+    ).fetchone()[0]
+    appointment_leads = db.execute(
+        f"SELECT COUNT(*) FROM leads {lead_where + (' AND ' if lead_where else 'WHERE ')}status IN (?, ?)",
+        tuple([*lead_params, LEAD_STATUS_VALUATION_BOOKED, LEAD_STATUS_APPOINTMENT_BOOKED])
+    ).fetchone()[0]
+    referral_totals = db.execute(f"""
+        SELECT COALESCE(SUM(service_referrals.fee_expected), 0) AS expected,
+               COALESCE(SUM(service_referrals.fee_received), 0) AS received
+        FROM service_referrals
+        JOIN leads ON leads.id = service_referrals.lead_id
+        {referral_where}
+    """, tuple(referral_params)).fetchone()
+    conversion_metrics = {
+        "appointment_rate": round((appointment_leads / totals["leads"]) * 100, 1) if totals["leads"] else 0,
+        "won_rate": round((won_leads / totals["leads"]) * 100, 1) if totals["leads"] else 0,
+        "referral_expected": referral_totals["expected"],
+        "referral_received": referral_totals["received"],
+    }
+
     organisations = []
     if is_platform_admin():
         organisations = db.execute("""
@@ -2235,6 +2345,7 @@ def admin_dashboard():
         referral_rows=referral_rows,
         source_rows=source_rows,
         tasks_due=tasks_due,
+        conversion_metrics=conversion_metrics,
         organisations=organisations,
         service_labels=SERVICE_LABELS,
     )
@@ -2303,6 +2414,9 @@ def billing():
         "SELECT COUNT(*) FROM leads WHERE organisation_id = ?",
         (organisation_id,)
     ).fetchone()[0]
+    lead_allowance = organisation["lead_allowance"] or 0
+    lead_usage_percent = round((lead_count / lead_allowance) * 100, 1) if lead_allowance else 0
+    leads_remaining = max(lead_allowance - lead_count, 0) if lead_allowance else 0
     referral_fees = db.execute("""
         SELECT COALESCE(SUM(fee_expected), 0) AS expected,
                COALESCE(SUM(fee_received), 0) AS received
@@ -2315,6 +2429,8 @@ def billing():
         "billing.html",
         organisation=organisation,
         lead_count=lead_count,
+        lead_usage_percent=lead_usage_percent,
+        leads_remaining=leads_remaining,
         referral_fees=referral_fees,
     )
 
@@ -2839,6 +2955,7 @@ def create_lead_report(data):
         "net_proceeds": to_float(data.get("net_proceeds", 0)),
         "borrowing_power": to_float(data.get("borrowing_power", 0)),
         "max_budget": to_float(data.get("max_budget", 0)),
+        "monthly_payment_estimate": to_float(data.get("monthly_payment_estimate", 0)),
         "recommendation": data.get("recommendation") or "No recommendation available.",
         "selected_services": selected_services,
     }

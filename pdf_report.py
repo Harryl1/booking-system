@@ -33,7 +33,14 @@ BRAND = {
 }
 
 SERVICE_LABELS = {
+    "valuation": "Local agent valuation",
     "agent_valuation": "Local agent valuation",
+    "local_agent_valuation": "Local agent valuation",
+    "epc": "EPC assessment",
+    "epc_booking": "EPC assessment",
+    "solicitor": "Solicitor quote",
+    "legal": "Solicitor quote",
+    "mortgage": "Mortgage advice",
     "mortgage_advice": "Mortgage advice",
     "conveyancing_quote": "Conveyancing quote",
 }
@@ -279,6 +286,15 @@ def summary_box(report_data, styles, content_width):
     return table
 
 
+def next_best_move(report_data):
+    recommendation = safe_text(report_data.get("recommendation"), "")
+    if recommendation and recommendation != "—":
+        return recommendation
+    if float(report_data.get("max_budget") or 0) > 0:
+        return "Confirm your sale price with a local valuation and sense-check your borrowing position before viewing your next property."
+    return "Start with a local valuation so your onward plans are based on a more reliable sale price."
+
+
 def detail_row(label, value, styles, total_width):
     label_width = 58 * mm
     value_width = total_width - label_width
@@ -500,7 +516,7 @@ def generate_pdf_report(report_data, filepath, logo_path=None):
     story.append(Spacer(1, 16))
 
     recommendation_text = safe_text(
-        report_data.get("recommendation"),
+        next_best_move(report_data),
         "We recommend reviewing your figures with a local expert before making any property decisions."
     )
 
@@ -511,6 +527,15 @@ def generate_pdf_report(report_data, filepath, logo_path=None):
         content_width
     )
     story.append(recommendation_box)
+    story.append(Spacer(1, 16))
+
+    cost_items = [
+        detail_row("Estimated moving costs", format_currency(report_data.get("moving_costs")), styles, content_width),
+        detail_row("Estimated equity after costs", format_currency(report_data.get("net_proceeds")), styles, content_width),
+        detail_row("Indicative borrowing power", format_currency(report_data.get("borrowing_power")), styles, content_width),
+        detail_row("Estimated monthly payment", format_currency(report_data.get("monthly_payment_estimate")), styles, content_width),
+    ]
+    story.append(boxed_section("Cost and affordability snapshot", cost_items, styles, content_width))
     story.append(Spacer(1, 16))
 
     assumptions_items = [
@@ -558,6 +583,13 @@ def generate_pdf_report(report_data, filepath, logo_path=None):
             content_width
         )
         story.append(services_box)
+
+    cta_lines = [
+        Paragraph("<b>Ready to confirm your numbers?</b>", styles["Body"]),
+        Paragraph("A local valuation and mortgage review will help turn these indicative figures into a clearer moving plan.", styles["Body"]),
+    ]
+    story.append(Spacer(1, 16))
+    story.append(boxed_section("Recommended follow-up", cta_lines, styles, content_width))
 
     # ------------------------------------------
     # Page 2 – Guidance & next steps

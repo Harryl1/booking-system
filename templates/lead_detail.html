@@ -6,7 +6,7 @@
     <title>{{ lead["name"] }} - equiome</title>
     <style>
         * { box-sizing: border-box; }
-        :root { --bg:#f4f7f8; --panel:#fff; --border:#d7dee7; --text:#243342; --muted:#5b6573; --brand:#12344d; --brand2:#2a7f9e; --radius:8px; }
+        :root { --bg:#f4f7f8; --panel:#fff; --border:#d7dee7; --text:#243342; --muted:#5b6573; --brand:#12344d; --brand2:#2a7f9e; --ok:#287a55; --warn:#a86718; --bad:#a33b3b; --soft:#eaf4f8; --radius:8px; }
         body { margin:0; font-family:Arial,sans-serif; background:var(--bg); color:var(--text); }
         .layout { display:flex; min-height:100vh; }
         .sidebar { width:240px; background:var(--brand); color:#fff; padding:24px 18px; }
@@ -15,24 +15,33 @@
         .sidebar a:hover,.sidebar a.active { background:#194967; }
         .main { flex:1; padding:24px; }
         .topbar,.panel { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:18px; margin-bottom:18px; }
-        .topbar { display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap; }
+        .topbar { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap; }
         h1,h2,h3 { margin-top:0; color:var(--brand); }
-        .grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
-        .full { grid-column:1 / -1; }
-        .muted,.meta { color:var(--muted); font-size:13px; }
-        .badge { display:inline-block; padding:5px 10px; border-radius:999px; background:#eaf4f8; color:var(--brand); font-weight:bold; font-size:12px; }
-        .btn,button { display:inline-flex; align-items:center; border:none; border-radius:var(--radius); padding:10px 14px; cursor:pointer; text-decoration:none; font-size:14px; }
+        h1 { margin-bottom:6px; }
+        .workspace { display:grid; grid-template-columns:1.35fr .9fr; gap:18px; align-items:start; }
+        .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }
+        .muted,.meta { color:var(--muted); font-size:13px; line-height:1.45; }
+        .metric { font-size:28px; font-weight:bold; color:var(--brand); margin-top:6px; }
+        .badge { display:inline-flex; align-items:center; padding:5px 10px; border-radius:999px; background:var(--soft); color:var(--brand); font-weight:bold; font-size:12px; }
+        .badge-hot { background:#fae7e7; color:var(--bad); }
+        .badge-warm { background:#fff4df; color:var(--warn); }
+        .btn,button { display:inline-flex; align-items:center; justify-content:center; border:none; border-radius:var(--radius); padding:10px 14px; cursor:pointer; text-decoration:none; font-size:14px; }
         .btn-primary { background:var(--brand2); color:#fff; }
         .btn-secondary,button { background:#fff; color:var(--text); border:1px solid var(--border); }
+        .actions { display:flex; gap:8px; flex-wrap:wrap; }
         input,select,textarea { width:100%; border:1px solid var(--border); border-radius:var(--radius); padding:10px 12px; font-size:14px; }
-        textarea { min-height:80px; }
+        textarea { min-height:86px; }
         .field { margin-bottom:10px; }
         .field label { display:block; font-weight:bold; font-size:13px; margin-bottom:6px; }
-        .list-item { border-top:1px solid var(--border); padding:12px 0; }
+        .timeline { display:flex; flex-direction:column; gap:10px; }
+        .list-item { border:1px solid var(--border); border-radius:var(--radius); padding:12px; background:#fff; }
         table { width:100%; border-collapse:collapse; }
         th,td { text-align:left; padding:10px; border-bottom:1px solid var(--border); vertical-align:top; }
         th { color:var(--muted); font-size:12px; }
-        @media (max-width: 800px) { .layout { display:block; } .sidebar { width:auto; } .grid { grid-template-columns:1fr; } }
+        .mini-form { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+        .mini-form .wide { grid-column:1 / -1; }
+        .next-action { border-left:4px solid var(--brand2); background:#f8fbfc; }
+        @media (max-width: 980px) { .layout { display:block; } .sidebar { width:auto; } .workspace { grid-template-columns:1fr; } }
     </style>
 </head>
 <body>
@@ -52,108 +61,153 @@
             <div>
                 <h1>{{ lead["name"] }}</h1>
                 <div class="muted">{{ lead["address"] }}</div>
+                <div style="margin-top:10px;">
+                    <span class="badge {% if priority_label == 'Hot' %}badge-hot{% elif priority_label == 'Warm' %}badge-warm{% endif %}">{{ priority_label }}</span>
+                    <span class="badge">{{ lead["status"]|title }}</span>
+                    {% if lead["marketing_consent"] %}<span class="badge">Marketing OK</span>{% endif %}
+                </div>
             </div>
-            <a class="btn btn-secondary" href="/leads">Back to leads</a>
+            <div class="actions">
+                <a class="btn btn-secondary" href="/leads">Back</a>
+                <a class="btn btn-primary" href="tel:{{ lead['phone'] }}">Call</a>
+                <a class="btn btn-secondary" href="mailto:{{ lead['email'] }}">Email</a>
+                {% if lead["report_token"] %}<a class="btn btn-secondary" href="/reports/{{ lead['report_token'] }}">PDF</a>{% endif %}
+            </div>
         </div>
 
         <div class="grid">
-            <div class="panel">
-                <h3>Contact</h3>
-                <p><strong>Phone:</strong> <a href="tel:{{ lead['phone'] }}">{{ lead["phone"] }}</a></p>
-                <p><strong>Email:</strong> <a href="mailto:{{ lead['email'] }}">{{ lead["email"] }}</a></p>
-                <p><strong>Status:</strong> <span class="badge">{{ lead["status"]|title }}</span></p>
-                <p><strong>Score:</strong> {{ lead["lead_score"] or 0 }}/100</p>
-                <form method="POST" action="/leads/update-status/{{ lead['id'] }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <div class="field">
-                        <label>Move status</label>
-                        <select name="status">
-                            {% for s in lead_statuses %}
-                                <option value="{{ s }}" {% if lead["status"] == s %}selected{% endif %}>{{ s|title }}</option>
-                            {% endfor %}
-                        </select>
+            <div class="panel"><div class="muted">Lead score</div><div class="metric">{{ lead["lead_score"] or 0 }}/100</div></div>
+            <div class="panel"><div class="muted">Estimated value</div><div class="metric">£{{ lead["valuation"] or 0 }}</div></div>
+            <div class="panel"><div class="muted">Source</div><div class="metric">{{ lead["source"]|replace("_", " ")|title }}</div></div>
+            <div class="panel"><div class="muted">Retain until</div><div class="metric">{{ lead["retention_until"] or "-" }}</div></div>
+        </div>
+
+        <div class="workspace">
+            <section>
+                <div class="panel next-action">
+                    <h3>Best Next Action</h3>
+                    <p style="margin-bottom:0;">{{ next_action }}</p>
+                </div>
+
+                <div class="panel">
+                    <h3>Lead Quality</h3>
+                    <div class="grid">
+                        {% for factor in score_factors %}
+                        <div class="list-item">{{ factor }}</div>
+                        {% endfor %}
                     </div>
-                    <button type="submit">Update status</button>
-                </form>
-            </div>
+                </div>
 
-            <div class="panel">
-                <h3>Property & Data</h3>
-                <p><strong>Valuation:</strong> £{{ lead["valuation"] }}</p>
-                <p><strong>Source:</strong> {{ lead["source"]|title }}</p>
-                <p><strong>Campaign:</strong> {{ lead["utm_campaign"] or "-" }}</p>
-                <p><strong>Marketing consent:</strong> {{ "Yes" if lead["marketing_consent"] else "No" }}</p>
-                <p><strong>Retain until:</strong> {{ lead["retention_until"] or "-" }}</p>
-                {% if lead["report_token"] %}
-                    <a class="btn btn-primary" href="/reports/{{ lead['report_token'] }}">Open Report PDF</a>
-                {% endif %}
-            </div>
+                <div class="panel">
+                    <h3>Service Referrals</h3>
+                    {% if referrals %}
+                    <table>
+                        <tr><th>Service</th><th>Status</th><th>Assigned</th><th>Fees</th><th>Update</th></tr>
+                        {% for referral in referrals %}
+                        <tr>
+                            <td>{{ service_labels.get(referral["service_type"], referral["service_type"]) }}</td>
+                            <td>{{ referral["status"]|title }}</td>
+                            <td>{{ referral["assigned_to"] or "-" }}</td>
+                            <td>£{{ referral["fee_received"] }} / £{{ referral["fee_expected"] }}</td>
+                            <td>
+                                <form method="POST" action="/referrals/update/{{ referral['id'] }}" class="mini-form">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <select name="status">
+                                        {% for s in referral_statuses %}
+                                            <option value="{{ s }}" {% if referral["status"] == s %}selected{% endif %}>{{ s|title }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <input name="assigned_to" value="{{ referral['assigned_to'] or '' }}" placeholder="Assigned to">
+                                    <input name="fee_expected" type="number" value="{{ referral['fee_expected'] or 0 }}" placeholder="Expected fee">
+                                    <input name="fee_received" type="number" value="{{ referral['fee_received'] or 0 }}" placeholder="Received fee">
+                                    <textarea class="wide" name="notes" placeholder="Referral notes">{{ referral["notes"] or "" }}</textarea>
+                                    <button class="wide" type="submit">Save referral</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </table>
+                    {% else %}
+                    <div class="muted">No service referrals requested yet.</div>
+                    {% endif %}
+                </div>
 
-            <div class="panel full">
-                <h3>Service Referrals</h3>
-                <table>
-                    <tr><th>Service</th><th>Status</th><th>Assigned</th><th>Fees</th><th>Update</th></tr>
-                    {% for referral in referrals %}
-                    <tr>
-                        <td>{{ service_labels.get(referral["service_type"], referral["service_type"]) }}</td>
-                        <td>{{ referral["status"]|title }}</td>
-                        <td>{{ referral["assigned_to"] or "-" }}</td>
-                        <td>£{{ referral["fee_received"] }} / £{{ referral["fee_expected"] }}</td>
-                        <td>
-                            <form method="POST" action="/referrals/update/{{ referral['id'] }}">
+                <div class="panel">
+                    <h3>Timeline</h3>
+                    <div class="timeline">
+                        <div class="list-item">
+                            <strong>Lead captured</strong>
+                            <div class="meta">{{ lead["created_at"] }} · {{ lead["source"]|replace("_", " ")|title }}</div>
+                        </div>
+                        {% for note in notes %}
+                        <div class="list-item">
+                            {{ note["note"] }}
+                            <div class="meta">{{ note["created_at"] }}{% if note["username"] %} · {{ note["username"] }}{% endif %}</div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </section>
+
+            <aside>
+                <div class="panel">
+                    <h3>Contact</h3>
+                    <p><strong>Phone:</strong> <a href="tel:{{ lead['phone'] }}">{{ lead["phone"] }}</a></p>
+                    <p><strong>Email:</strong> <a href="mailto:{{ lead['email'] }}">{{ lead["email"] }}</a></p>
+                    <p><strong>Campaign:</strong> {{ lead["utm_campaign"] or "-" }}</p>
+                    <p><strong>Privacy accepted:</strong> {{ lead["privacy_notice_accepted_at"] or "-" }}</p>
+                    <form method="POST" action="/leads/update-status/{{ lead['id'] }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <div class="field">
+                            <label>Move status</label>
+                            <select name="status">
+                                {% for s in lead_statuses %}
+                                    <option value="{{ s }}" {% if lead["status"] == s %}selected{% endif %}>{{ s|title }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <button type="submit">Update status</button>
+                    </form>
+                </div>
+
+                <div class="panel">
+                    <h3>Tasks</h3>
+                    <form method="POST" action="/leads/add-task/{{ lead['id'] }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <div class="field"><label>Task</label><input name="title" placeholder="e.g. Call after work" required></div>
+                        <div class="field"><label>Due date</label><input name="due_date" type="date"></div>
+                        <div class="field"><label>Due time</label><input name="due_time" type="time" value="09:00"></div>
+                        <button type="submit">Add task</button>
+                    </form>
+                    <div class="timeline" style="margin-top:12px;">
+                        {% for task in tasks %}
+                        <div class="list-item">
+                            <strong>{{ task["title"] }}</strong>
+                            <div class="meta">Due {{ task["due_at"] }}{% if task["completed_at"] %} · completed {{ task["completed_at"] }}{% endif %}</div>
+                            {% if not task["completed_at"] %}
+                            <form method="POST" action="/leads/tasks/complete/{{ task['id'] }}">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <select name="status">
-                                    {% for s in referral_statuses %}
-                                        <option value="{{ s }}" {% if referral["status"] == s %}selected{% endif %}>{{ s|title }}</option>
-                                    {% endfor %}
-                                </select>
-                                <input name="assigned_to" value="{{ referral['assigned_to'] or '' }}" placeholder="Assigned to">
-                                <input name="fee_expected" type="number" value="{{ referral['fee_expected'] or 0 }}" placeholder="Expected fee">
-                                <input name="fee_received" type="number" value="{{ referral['fee_received'] or 0 }}" placeholder="Received fee">
-                                <textarea name="notes" placeholder="Referral notes">{{ referral["notes"] or "" }}</textarea>
-                                <button type="submit">Save</button>
+                                <button type="submit">Mark done</button>
                             </form>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </table>
-                {% if not referrals %}<div class="muted">No services requested.</div>{% endif %}
-            </div>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                        {% if not tasks %}<div class="muted">No tasks yet.</div>{% endif %}
+                    </div>
+                </div>
 
-            <div class="panel">
-                <h3>Tasks</h3>
-                {% for task in tasks %}
-                    <div class="list-item">
-                        <strong>{{ task["title"] }}</strong>
-                        <div class="meta">Due {{ task["due_at"] }}{% if task["completed_at"] %} · completed {{ task["completed_at"] }}{% endif %}</div>
-                        {% if not task["completed_at"] %}
-                        <form method="POST" action="/leads/tasks/complete/{{ task['id'] }}">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                            <button type="submit">Mark done</button>
-                        </form>
-                        {% endif %}
-                    </div>
-                {% endfor %}
-                {% if not tasks %}<div class="muted">No tasks yet.</div>{% endif %}
-            </div>
-
-            <div class="panel">
-                <h3>Notes</h3>
-                <form method="POST" action="/leads/add-note/{{ lead['id'] }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <div class="field">
-                        <label>Add note</label>
-                        <textarea name="note" placeholder="Call outcome, next step, seller context"></textarea>
-                    </div>
-                    <button type="submit">Save note</button>
-                </form>
-                {% for note in notes %}
-                    <div class="list-item">
-                        {{ note["note"] }}
-                        <div class="meta">{{ note["created_at"] }}{% if note["username"] %} · {{ note["username"] }}{% endif %}</div>
-                    </div>
-                {% endfor %}
-            </div>
+                <div class="panel">
+                    <h3>Add Note</h3>
+                    <form method="POST" action="/leads/add-note/{{ lead['id'] }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <div class="field">
+                            <label>Note</label>
+                            <textarea name="note" placeholder="Call outcome, seller context, next step"></textarea>
+                        </div>
+                        <button type="submit">Save note</button>
+                    </form>
+                </div>
+            </aside>
         </div>
     </main>
 </div>

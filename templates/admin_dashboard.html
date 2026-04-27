@@ -53,6 +53,13 @@
         </div>
 
         <div class="grid">
+            <div class="panel"><div class="muted">Appointment rate</div><div class="metric">{{ conversion_metrics["appointment_rate"] }}%</div></div>
+            <div class="panel"><div class="muted">Won rate</div><div class="metric">{{ conversion_metrics["won_rate"] }}%</div></div>
+            <div class="panel"><div class="muted">Referral fees expected</div><div class="metric">£{{ conversion_metrics["referral_expected"] }}</div></div>
+            <div class="panel"><div class="muted">Referral fees received</div><div class="metric">£{{ conversion_metrics["referral_received"] }}</div></div>
+        </div>
+
+        <div class="grid">
             <div class="panel">
                 <h3>Referral Pipeline</h3>
                 <table>
@@ -83,13 +90,14 @@
         <div class="panel">
             <h3>Organisations</h3>
             <table>
-                <tr><th>Name</th><th>Plan</th><th>Billing</th><th>Leads</th></tr>
+                <tr><th>Name</th><th>Plan</th><th>Billing</th><th>Leads</th><th>Allowance</th></tr>
                 {% for org in organisations %}
                 <tr>
                     <td>{{ org["name"] }}</td>
                     <td>{{ org["subscription_plan"]|title }}</td>
                     <td>{{ org["billing_status"]|title }}</td>
                     <td>{{ org["lead_count"] }}</td>
+                    <td>{{ org["lead_allowance"] }}</td>
                 </tr>
                 {% endfor %}
             </table>

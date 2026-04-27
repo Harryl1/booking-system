@@ -44,9 +44,17 @@
             <div class="panel"><div class="muted">Current leads</div><div class="metric">{{ lead_count }}</div></div>
         </div>
         <div class="grid">
+            <div class="panel"><div class="muted">Allowance used</div><div class="metric">{{ lead_usage_percent }}%</div></div>
+            <div class="panel"><div class="muted">Leads remaining</div><div class="metric">{{ leads_remaining }}</div></div>
             <div class="panel"><div class="muted">Expected referral fees</div><div class="metric">£{{ referral_fees["expected"] }}</div></div>
             <div class="panel"><div class="muted">Received referral fees</div><div class="metric">£{{ referral_fees["received"] }}</div></div>
             <div class="panel"><div class="muted">Trial ends</div><div class="metric">{{ organisation["trial_ends_at"] or "-" }}</div></div>
+        </div>
+        <div class="panel">
+            <h3>Commercial Notes</h3>
+            <p class="muted">Use this page when reviewing whether an agent should stay on their current plan, move to a higher lead allowance, or be paused if billing becomes inactive.</p>
+            <p><strong>Suggested upgrade trigger:</strong> more than 80% of monthly lead allowance used, or repeat referral fee opportunities being generated.</p>
+            <p><strong>Suggested risk trigger:</strong> billing inactive, low contact rate, or overdue tasks building up.</p>
         </div>
     </main>
 </div>
