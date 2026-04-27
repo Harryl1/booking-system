@@ -1012,7 +1012,7 @@ def agent_terms():
 
 
 # -----------------------
-# AgencyHub Dashboard
+# equiome dashboard
 # -----------------------
 @app.route("/")
 @login_required
@@ -2020,7 +2020,7 @@ def billing():
 
 
 # -----------------------
-# EPCHub
+# EPC jobs
 # -----------------------
 @app.route("/epc", methods=["GET", "POST"])
 @login_required

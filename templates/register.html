@@ -3,17 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Register - EPC Booking System</title>
+    <title>Create account - equiome</title>
     <style>
         * {
             box-sizing: border-box;
         }
 
+        :root {
+            --bg: #f4f7f8;
+            --panel: #ffffff;
+            --border: #d7dee7;
+            --text: #243342;
+            --muted: #5b6573;
+            --primary: #2a7f9e;
+            --primary-dark: #216982;
+            --shadow: 0 16px 40px rgba(18, 52, 77, 0.12);
+        }
+
         body {
             font-family: Arial, sans-serif;
             margin: 0;
-            background-color: #f5f7fa;
-            color: #222;
+            background: var(--bg);
+            color: var(--text);
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -24,11 +35,19 @@
         .card {
             width: 100%;
             max-width: 460px;
-            background: white;
-            border: 1px solid #ddd;
-            border-radius: 10px;
-            padding: 28px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 32px;
+            box-shadow: var(--shadow);
+        }
+
+        .brand {
+            font-size: 24px;
+            font-weight: bold;
+            text-transform: lowercase;
+            color: #12344d;
+            margin-bottom: 24px;
         }
 
         h1 {
@@ -37,7 +56,7 @@
         }
 
         .muted {
-            color: #666;
+            color: var(--muted);
             margin-bottom: 20px;
         }
 
@@ -56,31 +75,33 @@
         select,
         button {
             width: 100%;
-            padding: 10px 12px;
+            padding: 12px 12px;
             font-size: 14px;
-            border-radius: 6px;
+            border-radius: 8px;
         }
 
         input,
         select {
-            border: 1px solid #ccc;
+            border: 1px solid var(--border);
             background: white;
         }
 
         button {
             border: none;
-            background-color: #2d6cdf;
+            background-color: var(--primary);
             color: white;
             cursor: pointer;
+            font-weight: bold;
         }
 
         button:hover {
-            background-color: #1f57b8;
+            background-color: var(--primary-dark);
         }
 
         a {
-            color: #2d6cdf;
+            color: var(--primary);
             text-decoration: none;
+            font-weight: bold;
         }
 
         a:hover {
@@ -96,8 +117,9 @@
 </head>
 <body>
     <div class="card">
-        <h1>Register</h1>
-        <p class="muted">Create a new user account.</p>
+        <div class="brand">equiome</div>
+        <h1>Create account</h1>
+        <p class="muted">Add a new workspace user.</p>
 
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -131,11 +153,11 @@
                 </select>
             </div>
 
-            <button type="submit">Register</button>
+            <button type="submit">Create account</button>
         </form>
 
         <div class="footer-link">
-            Already have an account? <a href="/login">Login here</a>
+            Already have an account? <a href="/login">Sign in</a>
         </div>
     </div>
 </body>

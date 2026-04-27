@@ -3,28 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EPCHub - AgencyHub</title>
+    <title>EPC jobs - equiome</title>
     <style>
         * {
             box-sizing: border-box;
         }
 
         :root {
-            --bg: #f6f9fc;
+            --bg: #f4f7f8;
             --panel: #ffffff;
-            --border: #e5e7eb;
-            --text: #1f2937;
-            --muted: #6b7280;
-            --sidebar: #111827;
-            --sidebar-hover: #1f2937;
-            --primary: #ff7a59;
-            --primary-dark: #e76545;
-            --secondary: #2563eb;
-            --success: #15803d;
-            --warning: #b45309;
-            --danger: #b91c1c;
-            --shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
-            --radius: 14px;
+            --border: #d7dee7;
+            --text: #243342;
+            --muted: #5b6573;
+            --sidebar: #12344d;
+            --sidebar-hover: #194967;
+            --primary: #2a7f9e;
+            --primary-dark: #216982;
+            --secondary: #12344d;
+            --success: #287a55;
+            --warning: #a86718;
+            --danger: #a33b3b;
+            --shadow: 0 8px 24px rgba(18, 52, 77, 0.08);
+            --radius: 8px;
         }
 
         body {
@@ -47,8 +47,10 @@
         }
 
         .brand {
-            font-size: 24px;
+            font-size: 22px;
             font-weight: bold;
+            letter-spacing: 0;
+            text-transform: lowercase;
             margin-bottom: 28px;
         }
 
@@ -57,7 +59,7 @@
             color: white;
             text-decoration: none;
             padding: 11px 12px;
-            border-radius: 10px;
+            border-radius: 8px;
             margin-bottom: 8px;
             font-size: 15px;
         }
@@ -101,7 +103,7 @@
         .btn,
         button {
             border: none;
-            border-radius: 10px;
+            border-radius: 8px;
             padding: 10px 14px;
             font-size: 14px;
             cursor: pointer;
@@ -137,13 +139,13 @@
         }
 
         .btn-danger {
-            background: #fee2e2;
-            color: #991b1b;
-            border: 1px solid #fecaca;
+            background: #fae7e7;
+            color: var(--danger);
+            border: 1px solid #edcaca;
         }
 
         .btn-danger:hover {
-            background: #fecaca;
+            background: #f4dada;
         }
 
         .btn-complete {
@@ -161,7 +163,7 @@
         }
 
         .btn-assign:hover {
-            background: #1d4ed8;
+            background: #0f2a40;
         }
 
         .panel {
@@ -293,7 +295,7 @@
         }
 
         .chip:hover {
-            background: #f9fafb;
+            background: #eef5f7;
         }
 
         .table-wrap {
@@ -312,24 +314,24 @@
             color: var(--muted);
             padding: 12px 10px;
             border-bottom: 1px solid var(--border);
-            background: #fafbfc;
+            background: #f8fbfc;
             position: sticky;
             top: 0;
         }
 
         td {
             padding: 14px 10px;
-            border-bottom: 1px solid #eef2f7;
+            border-bottom: 1px solid #e8eef3;
             vertical-align: top;
             font-size: 14px;
         }
 
         tr:hover {
-            background: #fcfdff;
+            background: #f8fbfc;
         }
 
         tr.overdue-row {
-            background: #fff7f7;
+            background: #fff8f6;
         }
 
         .booking-id {
@@ -367,23 +369,23 @@
         }
 
         .badge-new {
-            background: #fee2e2;
-            color: #991b1b;
+            background: #eaf4f7;
+            color: var(--primary-dark);
         }
 
         .badge-assigned {
-            background: #fef3c7;
-            color: #92400e;
+            background: #fff4df;
+            color: var(--warning);
         }
 
         .badge-completed {
-            background: #dcfce7;
-            color: #166534;
+            background: #e7f4ee;
+            color: var(--success);
         }
 
         .badge-overdue {
-            background: #fee2e2;
-            color: #991b1b;
+            background: #fae7e7;
+            color: var(--danger);
         }
 
         .muted,
@@ -401,9 +403,9 @@
 
         .mini-form {
             border: 1px solid var(--border);
-            border-radius: 12px;
+            border-radius: 8px;
             padding: 12px;
-            background: #fafbfc;
+            background: #f8fbfc;
         }
 
         .mini-form h4 {
@@ -476,7 +478,7 @@
         .progress {
             width: 100%;
             height: 10px;
-            background: #e5e7eb;
+            background: #d7dee7;
             border-radius: 999px;
             overflow: hidden;
         }
@@ -521,18 +523,18 @@
 <body>
 <div class="layout">
     <aside class="sidebar">
-        <div class="brand">AgencyHub</div>
+        <div class="brand">equiome</div>
         <a href="/">Dashboard</a>
         <a href="/leads">Leads</a>
-        <a href="/epc" class="active">EPCHub</a>
+        <a href="/epc" class="active">EPC jobs</a>
         <a href="/logout">Logout</a>
     </aside>
 
     <main class="main">
         <div class="topbar">
             <div class="title-block">
-                <h1>EPCHub</h1>
-                <p>Manage EPC bookings, assignments, completion workflow, and revenue performance.</p>
+                <h1>EPC jobs</h1>
+                <p>Manage EPC requests, assignments, completion workflow, and revenue performance.</p>
             </div>
 
             <div class="top-actions">
@@ -580,8 +582,8 @@
                 <div class="panel form-panel">
                     <div class="section-header">
                         <div>
-                            <div class="section-title">Create EPC booking</div>
-                            <div class="section-subtitle">Add new instructions quickly for the agency pipeline.</div>
+                            <div class="section-title">Create EPC job</div>
+                            <div class="section-subtitle">Add new instructions quickly for the property services pipeline.</div>
                         </div>
                     </div>
 
@@ -620,7 +622,7 @@
 
                             <div class="field">
                                 <label>&nbsp;</label>
-                                <button type="submit" class="btn-primary">Create booking</button>
+                                <button type="submit" class="btn-primary">Create job</button>
                             </div>
                         </div>
                     </form>
@@ -676,8 +678,8 @@
                 <div class="panel table-panel">
                     <div class="section-header">
                         <div>
-                            <div class="section-title">EPC bookings table</div>
-                            <div class="section-subtitle">Operations view for job assignment, editing, completion, and tracking.</div>
+                            <div class="section-title">EPC jobs table</div>
+                            <div class="section-subtitle">Operations view for assignment, editing, completion, and tracking.</div>
                         </div>
                     </div>
 
