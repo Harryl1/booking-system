@@ -34,7 +34,9 @@
         <h2>equiome</h2>
         <a href="/">Dashboard</a>
         <a href="/leads">Leads</a>
+        {% if session.role == "platform_admin" %}
         <a href="/referrals">Referrals</a>
+        {% endif %}
         <a href="/tasks">Tasks</a>
         <a href="/settings/organisation" class="active">Organisation</a>
         <a href="/epc">EPC jobs</a>

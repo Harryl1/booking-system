@@ -1872,7 +1872,7 @@ def lead_detail(lead_id):
 
 @app.get("/referrals")
 @login_required
-@admin_or_agent_required
+@role_required(ROLE_PLATFORM_ADMIN)
 def referrals():
     db = get_db()
     status_filter = request.args.get("status", "all").strip().lower()
@@ -2152,7 +2152,7 @@ def add_task_to_lead(lead_id):
 
 @app.route("/referrals/update/<int:referral_id>", methods=["POST"])
 @login_required
-@role_required(ROLE_AGENT)
+@role_required(ROLE_PLATFORM_ADMIN)
 def update_referral(referral_id):
     validate_csrf()
     status = (request.form.get("status") or "").strip().lower()

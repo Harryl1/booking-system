@@ -306,7 +306,9 @@
         <h2>equiome</h2>
         <a href="/" class="active">Dashboard</a>
         <a href="/leads">Leads</a>
+        {% if session.role == "platform_admin" %}
         <a href="/referrals">Referrals</a>
+        {% endif %}
         <a href="/tasks">Tasks</a>
         <a href="/settings/organisation">Organisation</a>
         <a href="/admin">Admin</a>
@@ -326,7 +328,9 @@
             <div class="quick-links">
                 <a href="/leads">View Leads</a>
                 <a href="/leads?priority=hot">Hot Leads</a>
+                {% if session.role == "platform_admin" %}
                 <a href="/referrals">Referrals</a>
+                {% endif %}
                 <a href="/tasks">Tasks</a>
                 <a href="/admin">Admin</a>
                 <a href="/epc">Open EPC jobs</a>
@@ -464,13 +468,19 @@
                 </div>
             </div>
             <div class="panel">
-                <h3>Service Pipeline</h3>
+                <h3>{% if session.role == "platform_admin" %}Service Pipeline{% else %}Service Interest{% endif %}</h3>
                 <div class="list">
                     {% if referral_breakdown %}
                         {% for referral in referral_breakdown %}
                         <div class="list-item">
                             <strong>{{ service_labels.get(referral["service_type"], referral["service_type"]) }}</strong>
-                            <div class="meta">{{ referral["status"]|title }} · {{ referral["total"] }} referral(s)</div>
+                            <div class="meta">
+                                {% if session.role == "platform_admin" %}
+                                    {{ referral["status"]|title }} · {{ referral["total"] }} referral(s)
+                                {% else %}
+                                    {{ referral["total"] }} lead(s) with this interest
+                                {% endif %}
+                            </div>
                         </div>
                         {% endfor %}
                     {% else %}

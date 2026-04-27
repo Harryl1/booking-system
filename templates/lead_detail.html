@@ -50,7 +50,9 @@
         <h2>equiome</h2>
         <a href="/">Dashboard</a>
         <a href="/leads" class="active">Leads</a>
+        {% if session.role == "platform_admin" %}
         <a href="/referrals">Referrals</a>
+        {% endif %}
         <a href="/tasks">Tasks</a>
         <a href="/settings/organisation">Organisation</a>
         <a href="/epc">EPC jobs</a>
@@ -110,14 +112,19 @@
                 </div>
 
                 <div class="panel">
-                    <h3>Service Referrals</h3>
+                    <h3>{% if session.role == "platform_admin" %}Service Referrals{% else %}Service Interest{% endif %}</h3>
                     {% if referrals %}
                     <table>
+                        {% if session.role == "platform_admin" %}
                         <tr><th>Service</th><th>Status</th><th>Assigned</th><th>Fees</th><th>Update</th></tr>
+                        {% else %}
+                        <tr><th>Service</th><th>Status</th><th>Consent</th></tr>
+                        {% endif %}
                         {% for referral in referrals %}
                         <tr>
                             <td>{{ service_labels.get(referral["service_type"], referral["service_type"]) }}</td>
                             <td>{{ referral["status"]|title }}</td>
+                            {% if session.role == "platform_admin" %}
                             <td>{{ referral["assigned_to"] or "-" }}</td>
                             <td>£{{ referral["fee_received"] }} / £{{ referral["fee_expected"] }}</td>
                             <td>
@@ -135,6 +142,9 @@
                                     <button class="wide" type="submit">Save referral</button>
                                 </form>
                             </td>
+                            {% else %}
+                            <td>{{ "Captured" if lead["referral_consent_accepted_at"] else "Not captured" }}</td>
+                            {% endif %}
                         </tr>
                         {% endfor %}
                     </table>
