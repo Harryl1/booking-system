@@ -538,6 +538,7 @@
                 <a href="/leads?status=new" class="btn btn-secondary">New leads</a>
                 <a href="/leads?status=contacted" class="btn btn-secondary">Follow-up</a>
                 <a href="/leads?priority=hot" class="btn btn-secondary">Hot leads</a>
+                <a href="/leads?priority=referral" class="btn btn-secondary">Referral opportunities</a>
                 <a href="/leads?priority=due" class="btn btn-secondary">Tasks due</a>
                 <a href="/leads?status=valuation booked" class="btn btn-secondary">Booked valuations</a>
                 {% if csv_exports_enabled %}
@@ -584,7 +585,13 @@
             <div class="panel kpi-card">
                 <div class="label">Hot leads</div>
                 <div class="value">{{ hot_leads }}</div>
-                <div class="sub">Score 60+ or hand-raise</div>
+                <div class="sub">Agent score 60+ or hand-raise</div>
+            </div>
+
+            <div class="panel kpi-card">
+                <div class="label">Referral opportunities</div>
+                <div class="value">{{ referral_opportunities }}</div>
+                <div class="sub">Referral score 50+</div>
             </div>
 
             <div class="panel kpi-card">
@@ -645,6 +652,7 @@
                                 <select id="priority" name="priority">
                                     <option value="all" {% if priority_filter == "all" %}selected{% endif %}>All priorities</option>
                                     <option value="hot" {% if priority_filter == "hot" %}selected{% endif %}>Hot leads</option>
+                                    <option value="referral" {% if priority_filter == "referral" %}selected{% endif %}>Referral opportunities</option>
                                     <option value="due" {% if priority_filter == "due" %}selected{% endif %}>Tasks due</option>
                                 </select>
                             </div>
@@ -662,6 +670,7 @@
                         <a class="chip" href="/leads?status=contacted">Contacted</a>
                         <a class="chip" href="/leads?status=valuation booked">Valuation booked</a>
                         <a class="chip" href="/leads?priority=hot">Hot</a>
+                        <a class="chip" href="/leads?priority=referral">Referral opportunity</a>
                         <a class="chip" href="/leads?priority=due">Due today</a>
                         {% if source_filter is defined %}
                         <a class="chip" href="/leads?source=property_tool">Property tool</a>
@@ -685,7 +694,7 @@
                                 <th>Lead</th>
                                 <th>Contact</th>
                                 <th>Property</th>
-                                <th>Score</th>
+                                <th>Scores</th>
                                 <th>Status</th>
                                 <th>Services</th>
                                 <th>Next follow-up</th>
@@ -708,9 +717,15 @@
                                     <span class="date-text">£{{ lead["valuation"] }}</span>
                                 </td>
                                 <td>
+                                    <div class="date-text">Agent</div>
                                     <strong>{{ lead["lead_score"] or 0 }}/100</strong>
                                     {% if lead["is_hot_lead"] or lead["lead_score"] >= 60 %}
                                         <br><span class="badge badge-hot">Hot</span>
+                                    {% endif %}
+                                    <div class="date-text" style="margin-top:6px;">Referral</div>
+                                    <strong>{{ lead["referral_score"] or 0 }}/100</strong>
+                                    {% if lead["referral_score"] >= 50 %}
+                                        <br><span class="badge badge-booked">Opportunity</span>
                                     {% endif %}
                                 </td>
                                 <td>

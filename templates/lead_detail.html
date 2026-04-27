@@ -78,9 +78,9 @@
         </div>
 
         <div class="grid">
-            <div class="panel"><div class="muted">Lead score</div><div class="metric">{{ lead["lead_score"] or 0 }}/100</div></div>
+            <div class="panel"><div class="muted">Agent score</div><div class="metric">{{ lead["lead_score"] or 0 }}/100</div></div>
+            <div class="panel"><div class="muted">Referral score</div><div class="metric">{{ lead["referral_score"] or 0 }}/100</div></div>
             <div class="panel"><div class="muted">Estimated value</div><div class="metric">£{{ lead["valuation"] or 0 }}</div></div>
-            <div class="panel"><div class="muted">Source</div><div class="metric">{{ lead["source"]|replace("_", " ")|title }}</div></div>
             <div class="panel"><div class="muted">Selling timeframe</div><div class="metric">{{ lead["selling_timeframe"] or "-" }}</div></div>
         </div>
 
@@ -92,9 +92,18 @@
                 </div>
 
                 <div class="panel">
-                    <h3>Lead Quality</h3>
+                    <h3>Agent Lead Quality</h3>
                     <div class="grid">
                         {% for factor in score_factors %}
+                        <div class="list-item">{{ factor }}</div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h3>Referral Opportunity</h3>
+                    <div class="grid">
+                        {% for factor in referral_score_factors %}
                         <div class="list-item">{{ factor }}</div>
                         {% endfor %}
                     </div>

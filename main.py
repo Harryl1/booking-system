@@ -385,6 +385,7 @@ def init_db():
                 utm_campaign TEXT,
                 selling_timeframe TEXT,
                 lead_score INTEGER NOT NULL DEFAULT 0,
+                referral_score INTEGER NOT NULL DEFAULT 0,
                 next_follow_up_at TEXT,
                 organisation_id INTEGER REFERENCES organisations (id)
             )
@@ -518,6 +519,7 @@ def init_db():
             utm_campaign TEXT,
             selling_timeframe TEXT,
             lead_score INTEGER NOT NULL DEFAULT 0,
+            referral_score INTEGER NOT NULL DEFAULT 0,
             next_follow_up_at TEXT,
             organisation_id INTEGER,
             FOREIGN KEY (assigned_agent_id) REFERENCES users (id),
@@ -622,12 +624,37 @@ def ensure_lead_action_columns():
         "utm_campaign": "TEXT",
         "selling_timeframe": "TEXT",
         "lead_score": "INTEGER NOT NULL DEFAULT 0",
+        "referral_score": "INTEGER NOT NULL DEFAULT 0",
         "next_follow_up_at": "TEXT",
     }
 
     for column_name, column_definition in optional_columns.items():
         if column_name not in existing_columns:
             db.execute(f"ALTER TABLE leads ADD COLUMN {column_name} {column_definition}")
+
+    try:
+        leads_to_score = db.execute("SELECT * FROM leads WHERE referral_score = 0").fetchall()
+        for lead in leads_to_score:
+            referrals = db.execute(
+                "SELECT service_type FROM service_referrals WHERE lead_id = ?",
+                (lead["id"],)
+            ).fetchall()
+            if not referrals:
+                continue
+            score_payload = dict(lead)
+            score_payload["selected_services"] = [referral["service_type"] for referral in referrals]
+            referral_score = calculate_referral_score(
+                score_payload,
+                marketing_consent=bool(lead["marketing_consent"]),
+                referral_consent=bool(lead["referral_consent_accepted_at"]),
+                referral_fee_disclosure=bool(lead["referral_fee_disclosure_accepted_at"]),
+            )
+            db.execute(
+                "UPDATE leads SET referral_score = ? WHERE id = ?",
+                (referral_score, lead["id"])
+            )
+    except Exception:
+        pass
 
     user_columns = table_columns(db, "users")
     if "organisation_id" not in user_columns:
@@ -823,8 +850,8 @@ def calculate_lead_score(data, marketing_consent=False):
     if data.get("phone"):
         score += 10
     requested_services = normalise_requested_services(data.get("help_requested") or data.get("selected_services"))
-    if requested_services:
-        score += min(len(requested_services) * 10, 30)
+    if SERVICE_VALUATION in requested_services:
+        score += 20
     if to_float(data.get("net_proceeds", 0)) > 50000:
         score += 15
     if to_float(data.get("max_budget", 0)) > 300000:
@@ -843,6 +870,46 @@ def calculate_lead_score(data, marketing_consent=False):
     return min(score, 100)
 
 
+def calculate_referral_score(
+    data,
+    marketing_consent=False,
+    referral_consent=False,
+    referral_fee_disclosure=False,
+):
+    score = 0
+    requested_services = normalise_requested_services(data.get("help_requested") or data.get("selected_services"))
+    service_scores = {
+        SERVICE_MORTGAGE: 30,
+        SERVICE_SOLICITOR: 25,
+        SERVICE_EPC: 15,
+        SERVICE_VALUATION: 10,
+    }
+    for service in requested_services:
+        score += service_scores.get(service, 0)
+    if referral_consent:
+        score += 15
+    if referral_fee_disclosure:
+        score += 10
+    if marketing_consent:
+        score += 5
+    if to_float(data.get("net_proceeds", 0)) > 50000:
+        score += 10
+    if to_float(data.get("max_budget", 0)) > 300000:
+        score += 10
+    if data.get("plan") == "buy":
+        score += 10
+    selling_timeframe = (data.get("selling_timeframe") or "").strip().lower()
+    timeframe_scores = {
+        "0-3 months": 15,
+        "3-6 months": 10,
+        "6-9 months": 5,
+        "9-12 months": 3,
+        "just exploring": 0,
+    }
+    score += timeframe_scores.get(selling_timeframe, 0)
+    return min(score, 100)
+
+
 def lead_score_factors(lead, referrals=None):
     referrals = referrals or []
     factors = []
@@ -850,8 +917,8 @@ def lead_score_factors(lead, referrals=None):
         factors.append("Marketing consent captured")
     if lead["phone"]:
         factors.append("Phone number supplied")
-    if referrals:
-        factors.append(f"{len(referrals)} service interest(s) requested")
+    if any(referral["service_type"] == SERVICE_VALUATION for referral in referrals):
+        factors.append("Local valuation requested")
     if lead["selling_timeframe"]:
         factors.append(f"Selling timeframe: {lead['selling_timeframe']}")
     if to_float(lead["valuation"], 0) >= 250000:
@@ -860,6 +927,32 @@ def lead_score_factors(lead, referrals=None):
         factors.append("High-priority lead score")
     if not factors:
         factors.append("Basic contact details captured")
+    return factors
+
+
+def referral_score_factors(lead, referrals=None):
+    referrals = referrals or []
+    factors = []
+    service_names = [
+        SERVICE_LABELS.get(referral["service_type"], referral["service_type"])
+        for referral in referrals
+    ]
+    if service_names:
+        factors.append("Requested services: " + ", ".join(service_names))
+    if lead["referral_consent_accepted_at"]:
+        factors.append("Referral sharing consent captured")
+    if lead["referral_fee_disclosure_accepted_at"]:
+        factors.append("Referral fee disclosure accepted")
+    if any(referral["service_type"] == SERVICE_MORTGAGE for referral in referrals):
+        factors.append("Mortgage referral opportunity")
+    if any(referral["service_type"] == SERVICE_SOLICITOR for referral in referrals):
+        factors.append("Conveyancing or solicitor referral opportunity")
+    if any(referral["service_type"] == SERVICE_EPC for referral in referrals):
+        factors.append("EPC referral opportunity")
+    if lead["selling_timeframe"] in {"0-3 months", "3-6 months"}:
+        factors.append(f"Near-term moving timeframe: {lead['selling_timeframe']}")
+    if not factors:
+        factors.append("No referral opportunity captured yet")
     return factors
 
 
@@ -1413,6 +1506,7 @@ def agencyhub():
     lost_leads = count_scoped_leads(db, "status = ?", (LEAD_STATUS_LOST,))
     won_leads = count_scoped_leads(db, "status = ?", (LEAD_STATUS_WON,))
     hot_leads = count_scoped_leads(db, "is_hot_lead = 1 OR lead_score >= ?", (60,))
+    referral_opportunities = count_scoped_leads(db, "referral_score >= ?", (50,))
 
     task_scope_clause, task_scope_params = agent_lead_clause("leads")
     task_where = "lead_tasks.completed_at IS NULL AND date(lead_tasks.due_at) <= date(?)"
@@ -1432,7 +1526,7 @@ def agencyhub():
         SELECT *
         FROM leads
         {recent_where_sql}
-        ORDER BY lead_score DESC, id DESC
+        ORDER BY lead_score DESC, referral_score DESC, id DESC
         LIMIT 5
     """, tuple(recent_params)).fetchall()
 
@@ -1576,6 +1670,7 @@ def agencyhub():
         won_leads=won_leads,
         lost_leads=lost_leads,
         hot_leads=hot_leads,
+        referral_opportunities=referral_opportunities,
         tasks_due=tasks_due,
         source_breakdown=source_breakdown,
         referral_breakdown=referral_breakdown,
@@ -1633,6 +1728,9 @@ def leads():
     if priority_filter == "hot":
         where_clauses.append("(is_hot_lead = 1 OR lead_score >= ?)")
         params.append(60)
+    elif priority_filter == "referral":
+        where_clauses.append("referral_score >= ?")
+        params.append(50)
     elif priority_filter == "due":
         where_clauses.append("next_follow_up_at IS NOT NULL AND date(next_follow_up_at) <= date(?)")
         params.append(datetime.now().strftime("%Y-%m-%d"))
@@ -1653,7 +1751,7 @@ def leads():
     if where_clauses:
         query += " WHERE " + " AND ".join(where_clauses)
 
-    query += " ORDER BY lead_score DESC, id DESC"
+    query += " ORDER BY lead_score DESC, referral_score DESC, id DESC"
 
     leads = db.execute(query, tuple(params)).fetchall()
     lead_ids = [lead["id"] for lead in leads]
@@ -1686,6 +1784,7 @@ def leads():
     contacted_leads = count_scoped_leads(db, "status = ?", (LEAD_STATUS_CONTACTED,))
     valuation_booked_leads = count_scoped_leads(db, "status = ?", (LEAD_STATUS_VALUATION_BOOKED,))
     hot_leads = count_scoped_leads(db, "is_hot_lead = 1 OR lead_score >= ?", (60,))
+    referral_opportunities = count_scoped_leads(db, "referral_score >= ?", (50,))
 
     conversion_rate = round(
         (valuation_booked_leads / total_leads) * 100, 1
@@ -1705,6 +1804,7 @@ def leads():
         search_query=search_query,
         lead_statuses=list(VALID_LEAD_STATUSES),
         hot_leads=hot_leads,
+        referral_opportunities=referral_opportunities,
         notes_by_lead=notes_by_lead,
         tasks_by_lead=tasks_by_lead,
         referrals_by_lead=referrals_by_lead,
@@ -1761,6 +1861,7 @@ def lead_detail(lead_id):
         referrals=referrals,
         next_action=best_next_action(lead, tasks, referrals),
         score_factors=lead_score_factors(lead, referrals),
+        referral_score_factors=referral_score_factors(lead, referrals),
         priority_label=contact_priority_label(lead),
         lead_statuses=list(VALID_LEAD_STATUSES),
         referral_statuses=list(VALID_REFERRAL_STATUSES),
@@ -1793,12 +1894,13 @@ def referrals():
     where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
     rows = db.execute(f"""
         SELECT service_referrals.*, leads.name, leads.email, leads.phone, leads.address, leads.lead_score,
+               leads.referral_score,
                leads.referral_consent_accepted_at,
                leads.referral_fee_disclosure_accepted_at
         FROM service_referrals
         JOIN leads ON leads.id = service_referrals.lead_id
         {where_sql}
-        ORDER BY service_referrals.status ASC, leads.lead_score DESC, service_referrals.created_at DESC
+        ORDER BY service_referrals.status ASC, leads.referral_score DESC, service_referrals.created_at DESC
     """, tuple(params)).fetchall()
 
     return render_template(
@@ -2169,7 +2271,7 @@ def export_leads_csv():
     where_sql, params = scoped_lead_where()
     rows = db.execute(f"""
         SELECT id, name, email, phone, address, valuation, source, utm_source,
-               utm_medium, utm_campaign, selling_timeframe, status, lead_stage, lead_score,
+               utm_medium, utm_campaign, selling_timeframe, status, lead_stage, lead_score, referral_score,
                marketing_consent, referral_consent_accepted_at, referral_fee_disclosure_accepted_at,
                created_at, next_follow_up_at, retention_until,
                (
@@ -2188,7 +2290,7 @@ def export_leads_csv():
     writer.writerow([
         "id", "name", "email", "phone", "address", "valuation", "source",
         "utm_source", "utm_medium", "utm_campaign", "selling_timeframe", "status", "lead_stage",
-        "lead_score", "marketing_consent", "referral_consent_accepted_at",
+        "lead_score", "referral_score", "marketing_consent", "referral_consent_accepted_at",
         "referral_fee_disclosure_accepted_at", "created_at", "next_follow_up_at",
         "retention_until", "referrals",
     ])
@@ -3092,6 +3194,12 @@ def save_lead_payload(data, create_report=False):
         if create_report:
             report_filename, report_token, report_expires_at = create_lead_report(data)
         lead_score = calculate_lead_score(data, bool(marketing_consent))
+        referral_score = calculate_referral_score(
+            data,
+            marketing_consent=bool(marketing_consent),
+            referral_consent=referral_consent_accepted,
+            referral_fee_disclosure=referral_fee_disclosure_accepted,
+        )
 
         db = get_db()
         organisation_id = (
@@ -3108,9 +3216,9 @@ def save_lead_payload(data, create_report=False):
                 assigned_agent_id, report_filename, report_token, report_expires_at,
                 marketing_consent, privacy_notice_accepted_at,
                 referral_consent_accepted_at, referral_fee_disclosure_accepted_at, retention_until,
-                source_page, utm_source, utm_medium, utm_campaign, selling_timeframe, lead_score, next_follow_up_at,
+                source_page, utm_source, utm_medium, utm_campaign, selling_timeframe, lead_score, referral_score, next_follow_up_at,
                 organisation_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             name,
             email,
@@ -3139,6 +3247,7 @@ def save_lead_payload(data, create_report=False):
             utm_campaign,
             selling_timeframe,
             lead_score,
+            referral_score,
             (datetime.now() + timedelta(days=1)).isoformat(),
             organisation_id,
         ))

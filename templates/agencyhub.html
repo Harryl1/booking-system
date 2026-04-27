@@ -351,6 +351,10 @@
                 <p>{{ hot_leads }}</p>
             </div>
             <div class="panel kpi-card">
+                <h4>Referral Opportunities</h4>
+                <p>{{ referral_opportunities }}</p>
+            </div>
+            <div class="panel kpi-card">
                 <h4>Tasks Due</h4>
                 <p>{{ tasks_due }}</p>
             </div>
@@ -496,7 +500,7 @@
                                 </span>
                                 <div class="meta">{{ lead["address"] }}</div>
                                 <div class="meta">{{ lead["email"] }} · {{ lead["phone"] }}</div>
-                                <div class="meta">Score: {{ lead["lead_score"] or 0 }}/100</div>
+                                <div class="meta">Agent score: {{ lead["lead_score"] or 0 }}/100 · Referral score: {{ lead["referral_score"] or 0 }}/100</div>
                             </div>
                         {% endfor %}
                     </div>
