@@ -31,11 +31,19 @@ app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORTS_DIR = os.path.join(BASE_DIR, "Generated_reports")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
+IS_PRODUCTION = (
+    os.environ.get("FLASK_ENV") == "production"
+    or os.environ.get("APP_ENV") == "production"
+    or bool(os.environ.get("RENDER"))
+)
 
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", os.urandom(32))
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "0") == "1"
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get(
+    "SESSION_COOKIE_SECURE",
+    "1" if IS_PRODUCTION else "0",
+) == "1"
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
 
 DB_PATH = os.environ.get("DB_PATH", os.path.join(BASE_DIR, "bookings.db"))
@@ -46,6 +54,8 @@ FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "*")
 PRIVACY_NOTICE_URL = os.environ.get("PRIVACY_NOTICE_URL", "")
 AGENT_TERMS_URL = os.environ.get("AGENT_TERMS_URL", "")
 ENABLE_TEST_TOOLS = os.environ.get("ENABLE_TEST_TOOLS", "0") == "1"
+ENABLE_CSV_EXPORTS = os.environ.get("ENABLE_CSV_EXPORTS", "0") == "1"
+CSV_EXPORT_MAX_ROWS = int(os.environ.get("CSV_EXPORT_MAX_ROWS", "500"))
 RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "60"))
 RATE_LIMIT_MAX_REQUESTS = int(os.environ.get("RATE_LIMIT_MAX_REQUESTS", "30"))
 LEAD_NOTIFICATION_EMAIL = os.environ.get("LEAD_NOTIFICATION_EMAIL", "")
@@ -62,11 +72,33 @@ os.makedirs(REPORTS_DIR, exist_ok=True)
 
 
 @app.after_request
-def add_api_cors_headers(response):
+def add_security_headers(response):
     if request.path.startswith("/api/property/"):
         response.headers["Access-Control-Allow-Origin"] = FRONTEND_ORIGIN
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
         response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault(
+        "Permissions-Policy",
+        "camera=(), microphone=(), geolocation=()",
+    )
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "img-src 'self' data:; "
+        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "connect-src 'self' https://property-decision-tool.onrender.com https://booking-system-b13f.onrender.com; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'",
+    )
+    if session.get("user_id") or request.path.startswith("/reports/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+        response.headers.setdefault("Pragma", "no-cache")
     return response
 
 ROLE_AGENT = "agent"
@@ -975,6 +1007,7 @@ def login():
         ).fetchone()
 
         if user and check_password_hash(user["password"], password):
+            session.permanent = True
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             session["role"] = user["role"]
@@ -1017,6 +1050,9 @@ def agent_terms():
 @app.route("/")
 @login_required
 def agencyhub():
+    if session.get("role") == ROLE_ASSESSOR:
+        return redirect("/epc")
+
     db = get_db()
     today = datetime.now().strftime("%Y-%m-%d")
 
@@ -1219,6 +1255,7 @@ def agencyhub():
 # -----------------------
 @app.route("/leads")
 @login_required
+@admin_or_agent_required
 def leads():
     db = get_db()
 
@@ -1325,12 +1362,14 @@ def leads():
         service_labels=SERVICE_LABELS,
         referral_statuses=list(VALID_REFERRAL_STATUSES),
         enable_test_tools=ENABLE_TEST_TOOLS,
+        csv_exports_enabled=ENABLE_CSV_EXPORTS,
         csrf_token=get_csrf_token()
     )
 
 
 @app.get("/leads/<int:lead_id>")
 @login_required
+@admin_or_agent_required
 def lead_detail(lead_id):
     db = get_db()
     scope_clause, scope_params = agent_lead_clause("")
@@ -1380,6 +1419,7 @@ def lead_detail(lead_id):
 
 @app.get("/referrals")
 @login_required
+@admin_or_agent_required
 def referrals():
     db = get_db()
     status_filter = request.args.get("status", "all").strip().lower()
@@ -1415,12 +1455,14 @@ def referrals():
         referral_statuses=list(VALID_REFERRAL_STATUSES),
         service_types=list(VALID_SERVICE_TYPES),
         service_labels=SERVICE_LABELS,
+        csv_exports_enabled=ENABLE_CSV_EXPORTS,
         csrf_token=get_csrf_token(),
     )
 
 
 @app.get("/tasks")
 @login_required
+@admin_or_agent_required
 def tasks():
     db = get_db()
     view_filter = request.args.get("view", "open").strip().lower()
@@ -1645,13 +1687,15 @@ def update_referral(referral_id):
 
     db = get_db()
     referral = db.execute("""
-        SELECT service_referrals.*, leads.id AS lead_id
+        SELECT service_referrals.*, leads.id AS lead_id, leads.organisation_id
         FROM service_referrals
         JOIN leads ON leads.id = service_referrals.lead_id
         WHERE service_referrals.id = ?
     """, (referral_id,)).fetchone()
 
     if referral is None:
+        abort(404, "Referral not found")
+    if session.get("role") == ROLE_AGENT and referral["organisation_id"] != current_organisation_id():
         abort(404, "Referral not found")
 
     referred_at = referral["referred_at"]
@@ -1700,13 +1744,15 @@ def complete_lead_task(task_id):
     validate_csrf()
     db = get_db()
     task = db.execute("""
-        SELECT lead_tasks.id, lead_tasks.lead_id
+        SELECT lead_tasks.id, lead_tasks.lead_id, leads.organisation_id
         FROM lead_tasks
         JOIN leads ON leads.id = lead_tasks.lead_id
         WHERE lead_tasks.id = ?
     """, (task_id,)).fetchone()
 
     if task is None:
+        abort(404, "Task not found")
+    if session.get("role") == ROLE_AGENT and task["organisation_id"] != current_organisation_id():
         abort(404, "Task not found")
 
     db.execute(
@@ -1718,10 +1764,14 @@ def complete_lead_task(task_id):
     return redirect(request.referrer or "/tasks")
 
 
-@app.get("/leads/export.csv")
+@app.post("/leads/export.csv")
 @login_required
 @role_required(ROLE_AGENT)
 def export_leads_csv():
+    if not ENABLE_CSV_EXPORTS:
+        abort(404)
+    validate_csrf()
+    apply_rate_limit(f"{client_ip()}:{session.get('user_id')}:export_csv")
     db = get_db()
     where_sql, params = scoped_lead_where()
     rows = db.execute(f"""
@@ -1736,7 +1786,8 @@ def export_leads_csv():
         FROM leads
         {where_sql}
         ORDER BY id DESC
-    """, tuple(params)).fetchall()
+        LIMIT ?
+    """, tuple([*params, CSV_EXPORT_MAX_ROWS])).fetchall()
 
     output = io.StringIO()
     writer = csv.writer(output)
@@ -1752,6 +1803,7 @@ def export_leads_csv():
     response = make_response(output.getvalue())
     response.headers["Content-Type"] = "text/csv"
     response.headers["Content-Disposition"] = "attachment; filename=leads.csv"
+    response.headers["Cache-Control"] = "no-store"
     write_audit_log("exported_csv", "lead")
     return response
 
@@ -1976,11 +2028,14 @@ def email_settings():
 @login_required
 @admin_or_agent_required
 def system_readiness():
+    secret_key = os.environ.get("SECRET_KEY", "")
     checks = [
-        ("SECRET_KEY set", bool(os.environ.get("SECRET_KEY"))),
+        ("SECRET_KEY set", bool(secret_key)),
+        ("SECRET_KEY is not a short/default value", len(secret_key) >= 32),
         ("INTERNAL_API_TOKEN set", bool(INTERNAL_API_TOKEN)),
         ("SESSION_COOKIE_SECURE enabled", app.config["SESSION_COOKIE_SECURE"]),
         ("FRONTEND_ORIGIN restricted", FRONTEND_ORIGIN != "*"),
+        ("CSV exports disabled by default", not ENABLE_CSV_EXPORTS),
         ("Privacy notice route available", True),
         ("Test tools disabled", not ENABLE_TEST_TOOLS),
         ("SMTP configured", bool(SMTP_HOST and CUSTOMER_EMAIL_FROM)),
@@ -2490,12 +2545,12 @@ def property_lead_action():
 @app.get("/reports/<report_token>")
 def get_private_report(report_token):
     token = (report_token or "").strip()
-    if not token:
+    if not token or not re.match(r"^[A-Za-z0-9_-]{32,128}$", token):
         abort(404)
 
     db = get_db()
     lead = db.execute("""
-        SELECT report_filename, report_expires_at
+        SELECT id, report_filename, report_expires_at
         FROM leads
         WHERE report_token = ?
     """, (token,)).fetchone()
@@ -2514,7 +2569,10 @@ def get_private_report(report_token):
     if not os.path.exists(filepath):
         abort(404)
 
-    return send_file(filepath, mimetype="application/pdf", as_attachment=True)
+    write_audit_log("downloaded_report", "lead", lead["id"])
+    response = send_file(filepath, mimetype="application/pdf", as_attachment=True)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def create_lead_report(data):

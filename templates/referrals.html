@@ -50,7 +50,12 @@
                 <h1>Service Referrals</h1>
                 <div class="muted">Track valuation, EPC, solicitor, and mortgage opportunities.</div>
             </div>
-            <a class="btn btn-secondary" href="/leads/export.csv">Export CSV</a>
+            {% if csv_exports_enabled %}
+            <form method="POST" action="/leads/export.csv" style="margin:0;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn-secondary">Export CSV</button>
+            </form>
+            {% endif %}
         </div>
 
         <div class="panel">

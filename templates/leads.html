@@ -540,7 +540,12 @@
                 <a href="/leads?priority=hot" class="btn btn-secondary">Hot leads</a>
                 <a href="/leads?priority=due" class="btn btn-secondary">Tasks due</a>
                 <a href="/leads?status=valuation booked" class="btn btn-secondary">Booked valuations</a>
-                <a href="/leads/export.csv" class="btn btn-secondary">Export CSV</a>
+                {% if csv_exports_enabled %}
+                <form method="POST" action="/leads/export.csv" style="margin:0;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn-secondary">Export CSV</button>
+                </form>
+                {% endif %}
 
                 {% if session.role == "agent" and enable_test_tools %}
                 <form method="POST" action="/leads/add-test" style="margin:0;">

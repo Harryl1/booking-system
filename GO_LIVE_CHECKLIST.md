@@ -7,6 +7,8 @@
 - Set `SESSION_COOKIE_SECURE=1`.
 - Set `FRONTEND_ORIGIN` to the live website origin, for example `https://example.com`.
 - Set `PRIVACY_NOTICE_URL` to the public privacy notice URL.
+- Leave `ENABLE_CSV_EXPORTS` unset or set to `0` unless bulk exports are specifically needed.
+- If CSV exports are enabled, set `CSV_EXPORT_MAX_ROWS` to the smallest practical number.
 - Optional email settings:
   - `SMTP_HOST`
   - `SMTP_PORT`
@@ -38,7 +40,7 @@
 
 - Confirm new lead email notifications are received if SMTP is configured.
 - Confirm agents can update statuses, add notes, and complete tasks.
-- Confirm CSV export works for reporting.
+- Confirm CSV export is disabled in production, or works only for approved users if deliberately enabled.
 - Review the report disclaimer before launch.
 - Confirm `ENABLE_TEST_TOOLS` is unset or set to `0` in production.
 - Confirm `/admin/system` has no critical missing production settings except planned Postgres migration during pilot.
