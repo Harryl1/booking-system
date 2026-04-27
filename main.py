@@ -3048,7 +3048,10 @@ def save_lead_payload(data, create_report=False):
     notes = (data.get("notes") or "").strip()
     requested_services = normalise_requested_services(data.get("help_requested") or data.get("selected_services"))
     marketing_consent = 1 if truthy(data.get("marketing_consent")) else 0
-    privacy_notice_accepted = 1 if truthy(data.get("privacy_notice_accepted")) else 0
+    privacy_notice_accepted = 1 if truthy(
+        data.get("privacy_notice_accepted")
+        or data.get("privacy_accepted")
+    ) else 0
     referral_consent_accepted = truthy(
         data.get("referral_consent_accepted")
         or data.get("referral_consent")
