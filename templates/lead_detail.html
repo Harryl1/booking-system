@@ -65,6 +65,8 @@
                     <span class="badge {% if priority_label == 'Hot' %}badge-hot{% elif priority_label == 'Warm' %}badge-warm{% endif %}">{{ priority_label }}</span>
                     <span class="badge">{{ lead["status"]|title }}</span>
                     {% if lead["marketing_consent"] %}<span class="badge">Marketing OK</span>{% endif %}
+                    {% if lead["referral_consent_accepted_at"] %}<span class="badge">Referral Consent OK</span>{% endif %}
+                    {% if lead["referral_fee_disclosure_accepted_at"] %}<span class="badge">Fee Disclosure OK</span>{% endif %}
                 </div>
             </div>
             <div class="actions">
@@ -156,6 +158,8 @@
                     <p><strong>Email:</strong> <a href="mailto:{{ lead['email'] }}">{{ lead["email"] }}</a></p>
                     <p><strong>Campaign:</strong> {{ lead["utm_campaign"] or "-" }}</p>
                     <p><strong>Privacy accepted:</strong> {{ lead["privacy_notice_accepted_at"] or "-" }}</p>
+                    <p><strong>Referral sharing consent:</strong> {{ lead["referral_consent_accepted_at"] or "Not captured" }}</p>
+                    <p><strong>Referral fee disclosure:</strong> {{ lead["referral_fee_disclosure_accepted_at"] or "Not captured" }}</p>
                     <form method="POST" action="/leads/update-status/{{ lead['id'] }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <div class="field">

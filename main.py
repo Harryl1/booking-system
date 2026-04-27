@@ -375,6 +375,8 @@ def init_db():
                 report_expires_at TEXT,
                 marketing_consent INTEGER NOT NULL DEFAULT 0,
                 privacy_notice_accepted_at TEXT,
+                referral_consent_accepted_at TEXT,
+                referral_fee_disclosure_accepted_at TEXT,
                 retention_until TEXT,
                 source_page TEXT,
                 utm_source TEXT,
@@ -505,6 +507,8 @@ def init_db():
             report_expires_at TEXT,
             marketing_consent INTEGER NOT NULL DEFAULT 0,
             privacy_notice_accepted_at TEXT,
+            referral_consent_accepted_at TEXT,
+            referral_fee_disclosure_accepted_at TEXT,
             retention_until TEXT,
             source_page TEXT,
             utm_source TEXT,
@@ -606,6 +610,8 @@ def ensure_lead_action_columns():
         "report_expires_at": "TEXT",
         "marketing_consent": "INTEGER NOT NULL DEFAULT 0",
         "privacy_notice_accepted_at": "TEXT",
+        "referral_consent_accepted_at": "TEXT",
+        "referral_fee_disclosure_accepted_at": "TEXT",
         "retention_until": "TEXT",
         "source_page": "TEXT",
         "utm_source": "TEXT",
@@ -1089,7 +1095,9 @@ def cleanup_expired_leads():
                 report_filename = NULL,
                 report_token = NULL,
                 report_expires_at = NULL,
-                marketing_consent = 0
+                marketing_consent = 0,
+                referral_consent_accepted_at = NULL,
+                referral_fee_disclosure_accepted_at = NULL
             WHERE id = ?
         """, (f"deleted+{lead['id']}@local", lead["id"]))
 
@@ -1121,6 +1129,16 @@ def validate_required_text(value, field_name, max_length=255):
     if len(value) > max_length:
         abort(400, f"{field_name} is too long")
     return value
+
+
+def truthy(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on", "accepted"}
+    return bool(value)
 
 
 def validate_int(value, field_name, min_value=None, max_value=None):
@@ -1740,7 +1758,9 @@ def referrals():
 
     where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
     rows = db.execute(f"""
-        SELECT service_referrals.*, leads.name, leads.email, leads.phone, leads.address, leads.lead_score
+        SELECT service_referrals.*, leads.name, leads.email, leads.phone, leads.address, leads.lead_score,
+               leads.referral_consent_accepted_at,
+               leads.referral_fee_disclosure_accepted_at
         FROM service_referrals
         JOIN leads ON leads.id = service_referrals.lead_id
         {where_sql}
@@ -2020,7 +2040,9 @@ def update_referral(referral_id):
 
     db = get_db()
     referral = db.execute("""
-        SELECT service_referrals.*, leads.id AS lead_id, leads.organisation_id
+        SELECT service_referrals.*, leads.id AS lead_id, leads.organisation_id,
+               leads.referral_consent_accepted_at,
+               leads.referral_fee_disclosure_accepted_at
         FROM service_referrals
         JOIN leads ON leads.id = service_referrals.lead_id
         WHERE service_referrals.id = ?
@@ -2030,6 +2052,10 @@ def update_referral(referral_id):
         abort(404, "Referral not found")
     if session.get("role") == ROLE_AGENT and referral["organisation_id"] != current_organisation_id():
         abort(404, "Referral not found")
+    if status in {REFERRAL_STATUS_REFERRED, REFERRAL_STATUS_IN_PROGRESS, REFERRAL_STATUS_COMPLETED} and not referral["referral_consent_accepted_at"]:
+        abort(400, "Referral consent has not been captured for this lead")
+    if (fee_expected > 0 or fee_received > 0) and not referral["referral_fee_disclosure_accepted_at"]:
+        abort(400, "Referral fee disclosure has not been captured for this lead")
 
     referred_at = referral["referred_at"]
     completed_at = referral["completed_at"]
@@ -2110,7 +2136,8 @@ def export_leads_csv():
     rows = db.execute(f"""
         SELECT id, name, email, phone, address, valuation, source, utm_source,
                utm_medium, utm_campaign, status, lead_stage, lead_score,
-               marketing_consent, created_at, next_follow_up_at, retention_until,
+               marketing_consent, referral_consent_accepted_at, referral_fee_disclosure_accepted_at,
+               created_at, next_follow_up_at, retention_until,
                (
                    SELECT GROUP_CONCAT(service_type || ':' || status, '; ')
                    FROM service_referrals
@@ -2127,7 +2154,8 @@ def export_leads_csv():
     writer.writerow([
         "id", "name", "email", "phone", "address", "valuation", "source",
         "utm_source", "utm_medium", "utm_campaign", "status", "lead_stage",
-        "lead_score", "marketing_consent", "created_at", "next_follow_up_at",
+        "lead_score", "marketing_consent", "referral_consent_accepted_at",
+        "referral_fee_disclosure_accepted_at", "created_at", "next_follow_up_at",
         "retention_until", "referrals",
     ])
     for row in rows:
@@ -2982,9 +3010,22 @@ def save_lead_payload(data, create_report=False):
     utm_campaign = (data.get("utm_campaign") or "").strip()
     created_at = data.get("created_at") or datetime.now().isoformat()
     notes = (data.get("notes") or "").strip()
-    marketing_consent = 1 if data.get("marketing_consent") else 0
-    privacy_notice_accepted = 1 if data.get("privacy_notice_accepted") else 0
+    requested_services = normalise_requested_services(data.get("help_requested") or data.get("selected_services"))
+    marketing_consent = 1 if truthy(data.get("marketing_consent")) else 0
+    privacy_notice_accepted = 1 if truthy(data.get("privacy_notice_accepted")) else 0
+    referral_consent_accepted = truthy(
+        data.get("referral_consent_accepted")
+        or data.get("referral_consent")
+        or data.get("third_party_referral_consent")
+    )
+    referral_fee_disclosure_accepted = truthy(
+        data.get("referral_fee_disclosure_accepted")
+        or data.get("referral_fee_disclosure")
+        or data.get("referral_fee_notice_accepted")
+    )
     privacy_notice_accepted_at = datetime.now().isoformat() if privacy_notice_accepted else None
+    referral_consent_accepted_at = datetime.now().isoformat() if referral_consent_accepted else None
+    referral_fee_disclosure_accepted_at = datetime.now().isoformat() if referral_fee_disclosure_accepted else None
     retention_until = data.get("retention_until") or retention_date(LEAD_RETENTION_DAYS)
 
     if not name:
@@ -2997,6 +3038,11 @@ def save_lead_payload(data, create_report=False):
         return jsonify({"success": False, "error": "Missing address"}), 400
     if not privacy_notice_accepted:
         return jsonify({"success": False, "error": "Privacy notice acceptance is required"}), 400
+    if requested_services and not referral_consent_accepted:
+        return jsonify({
+            "success": False,
+            "error": "Referral consent is required before selected services can be passed to partners"
+        }), 400
 
     report_filename = None
     report_token = None
@@ -3021,10 +3067,11 @@ def save_lead_payload(data, create_report=False):
                 source, status, created_at, notes,
                 lead_stage, is_hot_lead, updated_at,
                 assigned_agent_id, report_filename, report_token, report_expires_at,
-                marketing_consent, privacy_notice_accepted_at, retention_until,
+                marketing_consent, privacy_notice_accepted_at,
+                referral_consent_accepted_at, referral_fee_disclosure_accepted_at, retention_until,
                 source_page, utm_source, utm_medium, utm_campaign, lead_score, next_follow_up_at,
                 organisation_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             name,
             email,
@@ -3044,6 +3091,8 @@ def save_lead_payload(data, create_report=False):
             report_expires_at,
             marketing_consent,
             privacy_notice_accepted_at,
+            referral_consent_accepted_at,
+            referral_fee_disclosure_accepted_at,
             retention_until,
             source_page,
             utm_source,
@@ -3064,11 +3113,17 @@ def save_lead_payload(data, create_report=False):
             due_at=(datetime.now() + timedelta(days=1)).isoformat(),
             user_id=assigned_agent_id,
         )
-        created_referrals = create_service_referrals(lead_id, data.get("help_requested"))
+        created_referrals = create_service_referrals(lead_id, requested_services)
         if created_referrals:
             add_lead_note(
                 lead_id,
                 "Requested services: " + ", ".join(SERVICE_LABELS.get(service, service) for service in created_referrals),
+                user_id=assigned_agent_id,
+            )
+            add_lead_note(
+                lead_id,
+                "Referral sharing consent captured."
+                + (" Referral fee disclosure accepted." if referral_fee_disclosure_accepted else ""),
                 user_id=assigned_agent_id,
             )
         db.commit()

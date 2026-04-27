@@ -91,6 +91,10 @@
                         <strong><a href="/leads/{{ referral['lead_id'] }}">{{ referral["name"] }}</a></strong>
                         <div class="muted">{{ referral["phone"] }} · {{ referral["email"] }}</div>
                         <div class="muted">{{ referral["address"] }}</div>
+                        <div class="muted">
+                            Referral consent: {{ "Yes" if referral["referral_consent_accepted_at"] else "No" }}
+                            · Fee disclosure: {{ "Yes" if referral["referral_fee_disclosure_accepted_at"] else "No" }}
+                        </div>
                     </td>
                     <td>{{ service_labels.get(referral["service_type"], referral["service_type"]) }}</td>
                     <td><span class="badge">{{ referral["status"]|title }}</span></td>
