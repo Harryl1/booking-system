@@ -6,6 +6,7 @@ import csv
 import io
 import smtplib
 import re
+import json
 from functools import wraps
 from datetime import datetime, timedelta
 from email.message import EmailMessage
@@ -89,7 +90,7 @@ os.makedirs(REPORTS_DIR, exist_ok=True)
 
 @app.after_request
 def add_security_headers(response):
-    if request.path.startswith("/api/property/"):
+    if request.path.startswith("/api/property/") or request.path.startswith("/api/chatbot/"):
         response.headers["Access-Control-Allow-Origin"] = FRONTEND_ORIGIN
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
         response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
@@ -438,6 +439,29 @@ def init_db():
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS chatbot_conversations (
+                session_token TEXT PRIMARY KEY,
+                organisation_id INTEGER REFERENCES organisations (id),
+                lead_id INTEGER REFERENCES leads (id),
+                phase TEXT NOT NULL DEFAULT 'open',
+                status TEXT NOT NULL DEFAULT 'active',
+                captured_data TEXT NOT NULL DEFAULT '{}',
+                ai_summary TEXT,
+                source_page TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS chatbot_messages (
+                id SERIAL PRIMARY KEY,
+                session_token TEXT NOT NULL REFERENCES chatbot_conversations (session_token),
+                role TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS bookings (
                 id TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL REFERENCES users (id),
@@ -575,6 +599,30 @@ def init_db():
             UNIQUE (lead_id, service_type)
         );
 
+        CREATE TABLE IF NOT EXISTS chatbot_conversations (
+            session_token TEXT PRIMARY KEY,
+            organisation_id INTEGER,
+            lead_id INTEGER,
+            phase TEXT NOT NULL DEFAULT 'open',
+            status TEXT NOT NULL DEFAULT 'active',
+            captured_data TEXT NOT NULL DEFAULT '{}',
+            ai_summary TEXT,
+            source_page TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (organisation_id) REFERENCES organisations (id),
+            FOREIGN KEY (lead_id) REFERENCES leads (id)
+        );
+
+        CREATE TABLE IF NOT EXISTS chatbot_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_token TEXT NOT NULL,
+            role TEXT NOT NULL,
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (session_token) REFERENCES chatbot_conversations (session_token)
+        );
+
         CREATE TABLE IF NOT EXISTS bookings (
             id TEXT PRIMARY KEY,
             user_id INTEGER NOT NULL,
@@ -659,9 +707,65 @@ def ensure_lead_action_columns():
     if "organisation_id" not in user_columns:
         db.execute("ALTER TABLE users ADD COLUMN organisation_id INTEGER")
 
+    ensure_chatbot_tables(db)
     ensure_default_organisation(db)
 
     db.commit()
+
+
+def ensure_chatbot_tables(db):
+    if using_postgres():
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS chatbot_conversations (
+                session_token TEXT PRIMARY KEY,
+                organisation_id INTEGER REFERENCES organisations (id),
+                lead_id INTEGER REFERENCES leads (id),
+                phase TEXT NOT NULL DEFAULT 'open',
+                status TEXT NOT NULL DEFAULT 'active',
+                captured_data TEXT NOT NULL DEFAULT '{}',
+                ai_summary TEXT,
+                source_page TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS chatbot_messages (
+                id SERIAL PRIMARY KEY,
+                session_token TEXT NOT NULL REFERENCES chatbot_conversations (session_token),
+                role TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        return
+
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS chatbot_conversations (
+            session_token TEXT PRIMARY KEY,
+            organisation_id INTEGER,
+            lead_id INTEGER,
+            phase TEXT NOT NULL DEFAULT 'open',
+            status TEXT NOT NULL DEFAULT 'active',
+            captured_data TEXT NOT NULL DEFAULT '{}',
+            ai_summary TEXT,
+            source_page TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (organisation_id) REFERENCES organisations (id),
+            FOREIGN KEY (lead_id) REFERENCES leads (id)
+        )
+    """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS chatbot_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_token TEXT NOT NULL,
+            role TEXT NOT NULL,
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (session_token) REFERENCES chatbot_conversations (session_token)
+        )
+    """)
 
 
 def ensure_default_organisation(db):
@@ -1880,6 +1984,20 @@ def lead_detail(lead_id):
         WHERE lead_id = ?
         ORDER BY created_at ASC
     """, (lead_id,)).fetchall()
+    chatbot_conversations = db.execute("""
+        SELECT *
+        FROM chatbot_conversations
+        WHERE lead_id = ?
+        ORDER BY created_at DESC
+    """, (lead_id,)).fetchall()
+    chatbot_messages = []
+    if chatbot_conversations:
+        chatbot_messages = db.execute("""
+            SELECT *
+            FROM chatbot_messages
+            WHERE session_token = ?
+            ORDER BY created_at ASC, id ASC
+        """, (chatbot_conversations[0]["session_token"],)).fetchall()
 
     write_audit_log("viewed", "lead", lead_id)
     return render_template(
@@ -1888,6 +2006,8 @@ def lead_detail(lead_id):
         notes=notes,
         tasks=tasks,
         referrals=referrals,
+        chatbot_conversations=chatbot_conversations,
+        chatbot_messages=chatbot_messages,
         next_action=best_next_action(lead, tasks, referrals),
         score_factors=lead_score_factors(lead, referrals),
         referral_score_factors=referral_score_factors(lead, referrals),
@@ -3006,6 +3126,430 @@ def debug_leads():
     where_sql, params = scoped_lead_where()
     rows = db.execute(f"SELECT * FROM leads{where_sql} ORDER BY rowid DESC LIMIT 10", tuple(params)).fetchall()
     return jsonify([dict(row) for row in rows])
+
+
+CHATBOT_PHASE_OPEN = "open"
+CHATBOT_PHASE_DISCOVER = "discover"
+CHATBOT_PHASE_CALCULATE = "calculate"
+CHATBOT_PHASE_OFFER = "offer"
+CHATBOT_PHASE_HANDOFF = "handoff"
+CHATBOT_PHASE_DONE = "done"
+
+
+def chatbot_money(value):
+    return f"£{round(to_float(value, 0)):,.0f}"
+
+
+def chatbot_yes(value):
+    return (value or "").strip().lower() in {"yes", "y", "yeah", "yep", "ok", "okay", "sure", "please", "accepted", "i agree"}
+
+
+def chatbot_property_type(value):
+    text = (value or "").strip().lower().replace("_", " ").replace("-", " ")
+    if "flat" in text or "apartment" in text:
+        return "flat"
+    if "terrace" in text:
+        return "terraced"
+    if "semi" in text:
+        return "semi-detached"
+    if "detached" in text:
+        return "detached"
+    return ""
+
+
+def chatbot_timeframe(value):
+    text = (value or "").strip().lower()
+    if "0" in text or "3" in text or "soon" in text or "asap" in text:
+        return "0-3 months"
+    if "6" in text:
+        return "3-6 months"
+    if "9" in text:
+        return "6-9 months"
+    if "12" in text or "year" in text:
+        return "9-12 months"
+    if "explor" in text or "curious" in text or "not sure" in text:
+        return "Just exploring"
+    return ""
+
+
+def chatbot_plan(value):
+    text = (value or "").strip().lower()
+    if "rent" in text:
+        return "rent"
+    if "buy" in text or "purchase" in text:
+        return "buy"
+    if "explor" in text or "not sure" in text or "unsure" in text:
+        return "exploring"
+    return ""
+
+
+def chatbot_services(value):
+    text = (value or "").strip().lower()
+    if text in {"no", "none", "nothing", "skip", "no thanks"}:
+        return []
+    services = []
+    if "valuation" in text or "agent" in text:
+        services.append(SERVICE_VALUATION)
+    if "mortgage" in text or "broker" in text:
+        services.append(SERVICE_MORTGAGE)
+    if "solicitor" in text or "convey" in text or "legal" in text:
+        services.append(SERVICE_SOLICITOR)
+    if "epc" in text or "energy" in text:
+        services.append(SERVICE_EPC)
+    if "all" in text:
+        services = [SERVICE_VALUATION, SERVICE_MORTGAGE, SERVICE_SOLICITOR, SERVICE_EPC]
+    return normalise_requested_services(services)
+
+
+def chatbot_summary(data):
+    motivation = data.get("motivation") or "No motivation supplied"
+    timeframe = data.get("selling_timeframe") or "No timeframe supplied"
+    services = data.get("help_requested") or []
+    service_text = ", ".join(SERVICE_LABELS.get(service, service) for service in services) or "no services requested"
+    return (
+        f"Chatbot lead. Motivation: {motivation}. Timeframe: {timeframe}. "
+        f"Requested services: {service_text}. Condition notes: {data.get('condition') or 'not supplied'}."
+    )
+
+
+def chatbot_add_message(db, session_token, role, message):
+    db.execute("""
+        INSERT INTO chatbot_messages (session_token, role, message, created_at)
+        VALUES (?, ?, ?, ?)
+    """, (session_token, role, message, datetime.now().isoformat()))
+
+
+def chatbot_update(db, session_token, data, phase, status="active", lead_id=None, ai_summary=None):
+    db.execute("""
+        UPDATE chatbot_conversations
+        SET captured_data = ?,
+            phase = ?,
+            status = ?,
+            lead_id = COALESCE(?, lead_id),
+            ai_summary = COALESCE(?, ai_summary),
+            updated_at = ?
+        WHERE session_token = ?
+    """, (
+        json.dumps(data),
+        phase,
+        status,
+        lead_id,
+        ai_summary,
+        datetime.now().isoformat(),
+        session_token,
+    ))
+
+
+def chatbot_question(data):
+    if not data.get("address"):
+        data["awaiting"] = "address"
+        return CHATBOT_PHASE_OPEN, "What’s the address of the property?"
+    if not data.get("property_type"):
+        data["awaiting"] = "property_type"
+        return CHATBOT_PHASE_OPEN, "Got it. Is that a flat, terraced, semi-detached, or detached property?"
+    if not data.get("bedrooms"):
+        data["awaiting"] = "bedrooms"
+        return CHATBOT_PHASE_DISCOVER, "How many bedrooms does it have?"
+    if not data.get("condition"):
+        data["awaiting"] = "condition"
+        return CHATBOT_PHASE_DISCOVER, "Would you say it’s recently updated, in good order, or could do with some work?"
+    if not data.get("motivation"):
+        data["awaiting"] = "motivation"
+        return CHATBOT_PHASE_DISCOVER, "What’s prompting you to think about moving?"
+    if not data.get("selling_timeframe"):
+        data["awaiting"] = "selling_timeframe"
+        return CHATBOT_PHASE_DISCOVER, "How soon are you hoping to move? For example 0-3 months, 3-6 months, 6-9 months, 9-12 months, or just exploring."
+    if data.get("mortgage") is None:
+        data["awaiting"] = "mortgage"
+        return CHATBOT_PHASE_DISCOVER, "Roughly how much is left on the mortgage? If it’s owned outright, just say none."
+    if not data.get("plan"):
+        data["awaiting"] = "plan"
+        return CHATBOT_PHASE_DISCOVER, "Are you thinking of buying somewhere, renting next, or just exploring?"
+    if data.get("plan") in {"buy", "exploring"} and data.get("income") is None:
+        data["awaiting"] = "income"
+        return CHATBOT_PHASE_DISCOVER, "Roughly what’s the household annual income? A broad figure is fine."
+    if data.get("plan") == "buy" and data.get("target_price") is None:
+        data["awaiting"] = "target_price"
+        return CHATBOT_PHASE_DISCOVER, "Do you have a target price in mind for the next property? You can say skip."
+    data["awaiting"] = ""
+    return CHATBOT_PHASE_CALCULATE, ""
+
+
+def chatbot_apply_answer(data, message):
+    field = data.get("awaiting")
+    if field == "address":
+        data["address"] = message.strip()
+    elif field == "property_type":
+        parsed = chatbot_property_type(message)
+        if not parsed:
+            return "Please choose flat, terraced, semi-detached, or detached."
+        data["property_type"] = parsed
+    elif field == "bedrooms":
+        match = re.search(r"\d+", message)
+        if not match:
+            return "Please enter the number of bedrooms."
+        data["bedrooms"] = int(match.group(0))
+    elif field == "condition":
+        data["condition"] = message.strip()
+    elif field == "motivation":
+        data["motivation"] = message.strip()
+    elif field == "selling_timeframe":
+        parsed = chatbot_timeframe(message)
+        if not parsed:
+            return "Please choose 0-3 months, 3-6 months, 6-9 months, 9-12 months, or just exploring."
+        data["selling_timeframe"] = parsed
+    elif field == "mortgage":
+        if message.strip().lower() in {"none", "no", "owned outright", "outright", "0"}:
+            data["mortgage"] = 0
+        else:
+            data["mortgage"] = to_float(re.sub(r"[^\d.]", "", message), 0)
+    elif field == "plan":
+        parsed = chatbot_plan(message)
+        if not parsed:
+            return "Please say buying, renting, or just exploring."
+        data["plan"] = parsed
+    elif field == "income":
+        data["income"] = to_float(re.sub(r"[^\d.]", "", message), 0)
+    elif field == "target_price":
+        if message.strip().lower() in {"skip", "no", "none", "not sure"}:
+            data["target_price"] = 0
+        else:
+            data["target_price"] = to_float(re.sub(r"[^\d.]", "", message), 0)
+    elif field == "services":
+        data["help_requested"] = chatbot_services(message)
+    elif field == "full_name":
+        data["full_name"] = message.strip()
+    elif field == "email":
+        data["email"] = message.strip().lower()
+    elif field == "phone":
+        data["phone"] = message.strip()
+    elif field == "privacy":
+        data["privacy_notice_accepted"] = chatbot_yes(message)
+        if not data["privacy_notice_accepted"]:
+            return "I need privacy notice acceptance before I can save and send the report. Please reply yes if you’re happy to proceed."
+    elif field == "referral_consent":
+        data["referral_consent_accepted"] = chatbot_yes(message)
+        data["referral_fee_disclosure_accepted"] = chatbot_yes(message)
+    elif field == "marketing":
+        data["marketing_consent"] = chatbot_yes(message)
+    return ""
+
+
+def chatbot_calculate(data):
+    valuation = get_real_valuation(data["address"], data["property_type"])
+    calculation = calculate_property_decision({
+        "valuation": valuation,
+        "mortgage": data.get("mortgage", 0),
+        "plan": data.get("plan", ""),
+        "target_price": data.get("target_price", 0),
+        "income": data.get("income", 0),
+        "partner_income": 0,
+    })
+    data["valuation"] = valuation
+    data["calculation"] = calculation
+    data["awaiting"] = "services"
+    return (
+        f"Based on what you’ve told me, the property is likely worth between "
+        f"{chatbot_money(valuation.get('low'))} and {chatbot_money(valuation.get('high'))}. "
+        f"After the mortgage and typical selling costs, the estimated available equity is "
+        f"{chatbot_money(calculation.get('net_proceeds'))}. "
+        f"The estimated next budget is {chatbot_money(calculation.get('max_budget'))}. "
+        "Would you like help with a local valuation, mortgage advice, solicitor/conveyancing quote, or EPC? You can say any, all, or none."
+    )
+
+
+def chatbot_prepare_lead_payload(data, transcript):
+    valuation = data.get("valuation") or {}
+    calculation = data.get("calculation") or {}
+    services = data.get("help_requested") or []
+    summary = chatbot_summary(data)
+    notes = summary + "\n\nTranscript:\n" + transcript
+    return {
+        "full_name": data.get("full_name"),
+        "email": data.get("email"),
+        "phone": data.get("phone"),
+        "help_requested": services,
+        "address": data.get("address"),
+        "property_type": data.get("property_type"),
+        "selling_timeframe": data.get("selling_timeframe"),
+        "valuation_low": valuation.get("low", 0),
+        "valuation_high": valuation.get("high", valuation.get("estimated_value", 0)),
+        "moving_costs": (calculation.get("moving_costs") or {}).get("total", 0),
+        "net_proceeds": calculation.get("net_proceeds", 0),
+        "borrowing_power": calculation.get("borrowing_power", 0),
+        "max_budget": calculation.get("max_budget", 0),
+        "monthly_payment_estimate": calculation.get("monthly_payment_estimate", 0),
+        "recommendation": calculation.get("recommendation", ""),
+        "referral_consent_accepted": bool(data.get("referral_consent_accepted")),
+        "referral_fee_disclosure_accepted": bool(data.get("referral_fee_disclosure_accepted")),
+        "privacy_notice_accepted": bool(data.get("privacy_notice_accepted")),
+        "marketing_consent": bool(data.get("marketing_consent")),
+        "source": "chatbot",
+        "source_page": data.get("source_page", ""),
+        "notes": notes,
+    }, summary
+
+
+def chatbot_continue(data):
+    if data.get("calculation") and data.get("awaiting") == "services" and "help_requested" in data:
+        data["awaiting"] = "full_name"
+        return CHATBOT_PHASE_OFFER, "Thanks. To send your report and arrange any follow-up, what’s your full name?"
+    if data.get("awaiting") == "full_name" and data.get("full_name"):
+        data["awaiting"] = "email"
+        return CHATBOT_PHASE_OFFER, "And what email should I send the report to?"
+    if data.get("awaiting") == "email" and data.get("email"):
+        data["awaiting"] = "phone"
+        return CHATBOT_PHASE_OFFER, "What phone number should the agent or partner use if follow-up is needed?"
+    if data.get("awaiting") == "phone" and data.get("phone"):
+        data["awaiting"] = "privacy"
+        return CHATBOT_PHASE_OFFER, "Please confirm you’re happy with the privacy notice and for us to save your details to generate the report. Reply yes to continue."
+    if data.get("awaiting") == "privacy" and data.get("privacy_notice_accepted"):
+        if data.get("help_requested"):
+            data["awaiting"] = "referral_consent"
+            return CHATBOT_PHASE_OFFER, "Because you selected partner services, are you happy for us to share your details with trusted property professionals? Some partners may pay us a referral fee, which does not change what you pay."
+        data["awaiting"] = "marketing"
+        return CHATBOT_PHASE_OFFER, "Would you like occasional property updates from the agent? This is optional."
+    if data.get("awaiting") == "referral_consent":
+        if not data.get("referral_consent_accepted"):
+            data["help_requested"] = []
+            data["referral_fee_disclosure_accepted"] = False
+        data["awaiting"] = "marketing"
+        return CHATBOT_PHASE_OFFER, "Would you like occasional property updates from the agent? This is optional."
+    if data.get("awaiting") == "marketing" and "marketing_consent" in data:
+        data["awaiting"] = ""
+        return CHATBOT_PHASE_HANDOFF, ""
+    return chatbot_question(data)
+
+
+@app.post("/api/chatbot/start")
+def chatbot_start():
+    apply_rate_limit(f"{client_ip()}:chatbot_start", max_requests=20)
+    payload = request.get_json(silent=True) or {}
+    db = get_db()
+    session_token = secrets.token_urlsafe(32)
+    now = datetime.now().isoformat()
+    organisation_id = payload.get("organisation_id")
+    data = {
+        "source_page": (payload.get("source_page") or "").strip(),
+        "awaiting": "address",
+    }
+    db.execute("""
+        INSERT INTO chatbot_conversations (
+            session_token, organisation_id, phase, status, captured_data, source_page, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        session_token,
+        organisation_id,
+        CHATBOT_PHASE_OPEN,
+        "active",
+        json.dumps(data),
+        data["source_page"],
+        now,
+        now,
+    ))
+    message = "Hi, I’m Aria, Equiome’s property assistant. I’ll ask a few questions and then put together your personalised report. What’s the address of the property?"
+    chatbot_add_message(db, session_token, "assistant", message)
+    db.commit()
+    return jsonify({"session_token": session_token, "phase": CHATBOT_PHASE_OPEN, "message": message})
+
+
+@app.post("/api/chatbot/message")
+def chatbot_message():
+    apply_rate_limit(f"{client_ip()}:chatbot_message", max_requests=60)
+    payload = request.get_json(force=True)
+    session_token = (payload.get("session_token") or "").strip()
+    user_message = (payload.get("message") or "").strip()
+    if not session_token or not user_message:
+        return jsonify({"error": "Session token and message are required."}), 400
+
+    db = get_db()
+    conversation = db.execute(
+        "SELECT * FROM chatbot_conversations WHERE session_token = ?",
+        (session_token,)
+    ).fetchone()
+    if conversation is None:
+        return jsonify({"error": "Conversation not found."}), 404
+    if conversation["status"] == "completed":
+        return jsonify({"phase": CHATBOT_PHASE_DONE, "message": "This chat is already complete."})
+
+    data = json.loads(conversation["captured_data"] or "{}")
+    chatbot_add_message(db, session_token, "user", user_message)
+    validation_message = chatbot_apply_answer(data, user_message)
+    if validation_message:
+        chatbot_add_message(db, session_token, "assistant", validation_message)
+        chatbot_update(db, session_token, data, conversation["phase"])
+        db.commit()
+        return jsonify({"phase": conversation["phase"], "message": validation_message})
+
+    phase, assistant_message = chatbot_continue(data)
+    if phase == CHATBOT_PHASE_CALCULATE:
+        try:
+            assistant_message = chatbot_calculate(data)
+            phase = CHATBOT_PHASE_OFFER
+        except Exception:
+            app.logger.exception("Chatbot calculation failed")
+            return jsonify({"error": "I couldn’t calculate that right now. Please try again shortly."}), 500
+    elif phase == CHATBOT_PHASE_HANDOFF:
+        messages = db.execute(
+            "SELECT role, message FROM chatbot_messages WHERE session_token = ? ORDER BY id ASC",
+            (session_token,)
+        ).fetchall()
+        transcript = "\n".join(f"{row['role']}: {row['message']}" for row in messages)
+        lead_payload, summary = chatbot_prepare_lead_payload(data, transcript)
+        result = save_lead_payload(lead_payload, create_report=True)
+        status_code = 200
+        response = result
+        if isinstance(result, tuple):
+            response, status_code = result
+        response_data = response.get_json(silent=True) or {}
+        if status_code >= 400 or not response_data.get("success"):
+            chatbot_add_message(db, session_token, "assistant", "I couldn’t save the report just now. Please try again in a moment.")
+            chatbot_update(db, session_token, data, CHATBOT_PHASE_OFFER)
+            db.commit()
+            return response
+        lead_id = response_data.get("lead_id")
+        data["lead_id"] = lead_id
+        data["pdf_url"] = response_data.get("pdf_url")
+        if data.get("pdf_url", "").startswith("/"):
+            data["pdf_url"] = request.host_url.rstrip("/") + data["pdf_url"]
+        assistant_message = "Right, I’ve got everything I need. Your report is being generated now and the team will follow up where requested."
+        if data.get("pdf_url"):
+            assistant_message += f" You can open it here: {data['pdf_url']}"
+        phase = CHATBOT_PHASE_DONE
+        chatbot_add_message(db, session_token, "assistant", assistant_message)
+        chatbot_update(db, session_token, data, phase, status="completed", lead_id=lead_id, ai_summary=summary)
+        db.commit()
+        return jsonify({
+            "phase": phase,
+            "message": assistant_message,
+            "lead_id": lead_id,
+            "pdf_url": data.get("pdf_url"),
+        })
+
+    chatbot_add_message(db, session_token, "assistant", assistant_message)
+    chatbot_update(db, session_token, data, phase)
+    db.commit()
+    return jsonify({"phase": phase, "message": assistant_message})
+
+
+@app.post("/api/chatbot/end")
+def chatbot_end():
+    payload = request.get_json(force=True)
+    session_token = (payload.get("session_token") or "").strip()
+    if not session_token:
+        return jsonify({"error": "Session token is required."}), 400
+    db = get_db()
+    conversation = db.execute(
+        "SELECT * FROM chatbot_conversations WHERE session_token = ?",
+        (session_token,)
+    ).fetchone()
+    if conversation is None:
+        return jsonify({"error": "Conversation not found."}), 404
+    data = json.loads(conversation["captured_data"] or "{}")
+    data["ended_by_user"] = True
+    chatbot_update(db, session_token, data, CHATBOT_PHASE_DONE, status="closed")
+    db.commit()
+    return jsonify({"success": True})
 
 
 @app.post("/api/property/value")

@@ -111,6 +111,22 @@
                     </div>
                 </div>
 
+                {% if chatbot_conversations %}
+                <div class="panel">
+                    <h3>Chatbot Conversation</h3>
+                    <p class="muted">{{ chatbot_conversations[0]["ai_summary"] or "No summary available yet." }}</p>
+                    <div class="timeline">
+                        {% for message in chatbot_messages %}
+                        <div class="list-item">
+                            <strong>{{ "Homeowner" if message["role"] == "user" else "Aria" }}</strong>
+                            <div>{{ message["message"] }}</div>
+                            <div class="meta">{{ message["created_at"] }}</div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
                 <div class="panel">
                     <h3>{% if session.role == "platform_admin" %}Service Referrals{% else %}Service Interest{% endif %}</h3>
                     {% if referrals %}
