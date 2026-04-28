@@ -15,7 +15,11 @@
         .sidebar a:hover,.sidebar a.active { background:#194967; }
         .main { flex:1; padding:24px; }
         .panel,.topbar { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:18px; margin-bottom:18px; }
+        .topbar { display:flex; justify-content:space-between; gap:16px; align-items:center; flex-wrap:wrap; }
         h1,h2,h3 { margin-top:0; color:var(--brand); }
+        h1 { margin-bottom:8px; }
+        .btn-primary { display:inline-flex; align-items:center; justify-content:center; background:var(--brand2); color:#fff; text-decoration:none; border-radius:var(--radius); padding:10px 14px; font-weight:bold; }
+        .btn-primary:hover { background:#216982; }
         .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; }
         .metric { font-size:30px; font-weight:bold; }
         .muted { color:var(--muted); font-size:13px; }
@@ -41,8 +45,13 @@
     </aside>
     <main class="main">
         <div class="topbar">
-            <h1>Admin Dashboard</h1>
-            <div class="muted">Commercial and operational overview.</div>
+            <div>
+                <h1>Admin Dashboard</h1>
+                <div class="muted">Commercial and operational overview.</div>
+            </div>
+            {% if session.role == "platform_admin" %}
+            <a class="btn-primary" href="/register">Add user</a>
+            {% endif %}
         </div>
 
         <div class="grid">
