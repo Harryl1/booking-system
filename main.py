@@ -22,6 +22,7 @@ from flask import (
     make_response,
 )
 import requests
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from pdf_report import generate_pdf_report
@@ -33,6 +34,7 @@ except ImportError:
     psycopg = None
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORTS_DIR = os.path.join(BASE_DIR, "Generated_reports")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -42,7 +44,10 @@ IS_PRODUCTION = (
     or bool(os.environ.get("RENDER"))
 )
 
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", os.urandom(32))
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if IS_PRODUCTION and not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY must be set in production")
+app.config["SECRET_KEY"] = SECRET_KEY or os.urandom(32)
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.environ.get(
@@ -65,6 +70,9 @@ ENABLE_CSV_EXPORTS = os.environ.get("ENABLE_CSV_EXPORTS", "0") == "1"
 CSV_EXPORT_MAX_ROWS = int(os.environ.get("CSV_EXPORT_MAX_ROWS", "500"))
 RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "60"))
 RATE_LIMIT_MAX_REQUESTS = int(os.environ.get("RATE_LIMIT_MAX_REQUESTS", "30"))
+LEAD_DAILY_IP_LIMIT = int(os.environ.get("LEAD_DAILY_IP_LIMIT", "20"))
+ADMIN_SETUP_TOKEN = os.environ.get("ADMIN_SETUP_TOKEN", "")
+ADMIN_EMAIL_DOMAIN = os.environ.get("ADMIN_EMAIL_DOMAIN", "").strip().lower()
 LEAD_NOTIFICATION_EMAIL = os.environ.get("LEAD_NOTIFICATION_EMAIL", "")
 CUSTOMER_EMAIL_FROM = os.environ.get("CUSTOMER_EMAIL_FROM", "")
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
@@ -74,6 +82,7 @@ SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "1") == "1"
 
 RATE_LIMIT_BUCKETS = {}
+DAILY_LIMIT_BUCKETS = {}
 
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
@@ -137,16 +146,6 @@ VALID_LEAD_STATUSES = {
 }
 VALID_ROLES = {ROLE_AGENT, ROLE_ASSESSOR, ROLE_PLATFORM_ADMIN}
 VALID_BOOKING_STATUSES = {STATUS_NEW, STATUS_ASSIGNED, STATUS_COMPLETED}
-VALID_LEAD_STATUSES = {
-    LEAD_STATUS_NEW,
-    LEAD_STATUS_CONTACTED,
-    LEAD_STATUS_VALUATION_BOOKED,
-    LEAD_STATUS_QUALIFIED,
-    LEAD_STATUS_ATTEMPTED,
-    LEAD_STATUS_APPOINTMENT_BOOKED,
-    LEAD_STATUS_WON,
-    LEAD_STATUS_LOST,
-}
 VALID_PROPERTY_TYPES = {"flat", "terraced", "semi detached", "detached"}
 VALID_SELLING_TIMEFRAMES = {"0-3 months", "3-6 months", "6-9 months", "9-12 months", "just exploring", ""}
 SERVICE_VALUATION = "valuation"
@@ -654,7 +653,7 @@ def ensure_lead_action_columns():
                 (referral_score, lead["id"])
             )
     except Exception:
-        pass
+        app.logger.exception("Failed to backfill referral scores")
 
     user_columns = table_columns(db, "users")
     if "organisation_id" not in user_columns:
@@ -770,22 +769,32 @@ def validate_internal_api_token():
 
 
 def client_ip():
-    forwarded_for = request.headers.get("X-Forwarded-For", "")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
     return request.remote_addr or "unknown"
 
 
-def apply_rate_limit(key):
-    if RATE_LIMIT_MAX_REQUESTS <= 0:
+def apply_rate_limit(key, max_requests=None, window_seconds=None):
+    max_requests = RATE_LIMIT_MAX_REQUESTS if max_requests is None else max_requests
+    window_seconds = RATE_LIMIT_WINDOW_SECONDS if window_seconds is None else window_seconds
+    if max_requests <= 0:
         return
     now = datetime.now()
     bucket = RATE_LIMIT_BUCKETS.setdefault(key, [])
-    cutoff = now - timedelta(seconds=RATE_LIMIT_WINDOW_SECONDS)
+    cutoff = now - timedelta(seconds=window_seconds)
     bucket[:] = [seen_at for seen_at in bucket if seen_at > cutoff]
-    if len(bucket) >= RATE_LIMIT_MAX_REQUESTS:
+    if len(bucket) >= max_requests:
         abort(429, "Too many requests. Please try again shortly.")
     bucket.append(now)
+
+
+def apply_daily_ip_limit(key, max_requests):
+    if max_requests <= 0:
+        return
+    today = datetime.now().date().isoformat()
+    bucket_key = f"{today}:{key}"
+    DAILY_LIMIT_BUCKETS.setdefault(bucket_key, 0)
+    if DAILY_LIMIT_BUCKETS[bucket_key] >= max_requests:
+        abort(429, "Daily limit reached. Please try again tomorrow.")
+    DAILY_LIMIT_BUCKETS[bucket_key] += 1
 
 
 def write_audit_log(action, entity_type, entity_id=None):
@@ -805,7 +814,7 @@ def write_audit_log(action, entity_type, entity_id=None):
         ))
         db.commit()
     except Exception:
-        pass
+        app.logger.exception("Failed to write audit log")
 
 
 def add_lead_note(lead_id, note, user_id=None):
@@ -1079,7 +1088,7 @@ def notify_new_lead(lead_id, name, email, phone, address, lead_score, selling_ti
     try:
         send_email(LEAD_NOTIFICATION_EMAIL, f"New property lead: {name}", body)
     except Exception:
-        pass
+        app.logger.exception("Failed to send new lead notification")
 
 
 def send_customer_confirmation(email, report_url):
@@ -1094,7 +1103,7 @@ def send_customer_confirmation(email, report_url):
     try:
         send_email(email, "Your Equiome property report", body)
     except Exception:
-        pass
+        app.logger.exception("Failed to send customer confirmation")
 
 
 def agent_lead_clause(alias="leads"):
@@ -1217,8 +1226,6 @@ def cleanup_expired_leads():
 
 @app.before_request
 def apply_retention_housekeeping():
-    if request.path.startswith("/api/property/"):
-        apply_rate_limit(f"{client_ip()}:{request.path}")
     if request.endpoint == "static":
         return
     if session.get("last_retention_check") == datetime.now().date().isoformat():
@@ -1279,6 +1286,11 @@ def validate_role(role):
     if role not in VALID_ROLES:
         abort(400, "Invalid role")
     return role
+
+
+def validate_admin_username(username):
+    if ADMIN_EMAIL_DOMAIN and not username.lower().endswith(f"@{ADMIN_EMAIL_DOMAIN}"):
+        abort(400, f"Platform admin accounts must use an @{ADMIN_EMAIL_DOMAIN} email address")
 
 
 def validate_property_type(property_type):
@@ -1390,11 +1402,23 @@ def get_booking_for_assessor(db, booking_id, assessor_id):
 @app.route("/register", methods=["GET", "POST"])
 def register():
     db = get_db()
-    user_count = db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    if user_count > 0 and "user_id" not in session:
-        abort(403, "User registration is restricted")
-    if user_count > 0 and session.get("role") != ROLE_AGENT:
-        abort(403, "Only agents can create users")
+    platform_admin_count = db.execute(
+        "SELECT COUNT(*) FROM users WHERE role = ?",
+        (ROLE_PLATFORM_ADMIN,)
+    ).fetchone()[0]
+    setup_mode = platform_admin_count == 0
+
+    if setup_mode:
+        if not ADMIN_SETUP_TOKEN:
+            abort(503, "Admin setup token is not configured")
+        supplied_setup_token = request.values.get("setup_token", "")
+        if not secrets.compare_digest(supplied_setup_token, ADMIN_SETUP_TOKEN):
+            abort(403, "Admin setup token is required")
+    else:
+        if "user_id" not in session:
+            abort(403, "User registration is restricted")
+        if session.get("role") != ROLE_PLATFORM_ADMIN:
+            abort(403, "Only Equiome admins can create users")
 
     if request.method == "POST":
         validate_csrf()
@@ -1405,10 +1429,12 @@ def register():
             max_length=100
         )
         password = request.form.get("password", "")
-        role = validate_role(request.form.get("role"))
+        role = ROLE_PLATFORM_ADMIN if setup_mode else validate_role(request.form.get("role"))
 
-        if len(password) < 6:
-            abort(400, "Password must be at least 6 characters")
+        if len(password) < 12:
+            abort(400, "Password must be at least 12 characters")
+        if role == ROLE_PLATFORM_ADMIN:
+            validate_admin_username(username)
 
         hashed_password = generate_password_hash(password)
         organisation_id = session.get("organisation_id") or default_organisation_id(db)
@@ -1429,7 +1455,10 @@ def register():
 
     return render_template(
         "register.html",
-        csrf_token=get_csrf_token()
+        csrf_token=get_csrf_token(),
+        setup_mode=setup_mode,
+        setup_token=request.values.get("setup_token", ""),
+        allow_platform_admin=session.get("role") == ROLE_PLATFORM_ADMIN,
     )
 
 
@@ -2969,8 +2998,10 @@ def not_found(error):
 
 @app.get("/debug-leads")
 @login_required
-@role_required(ROLE_AGENT)
+@role_required(ROLE_PLATFORM_ADMIN)
 def debug_leads():
+    if not ENABLE_TEST_TOOLS:
+        abort(404)
     db = get_db()
     where_sql, params = scoped_lead_where()
     rows = db.execute(f"SELECT * FROM leads{where_sql} ORDER BY rowid DESC LIMIT 10", tuple(params)).fetchall()
@@ -2979,6 +3010,7 @@ def debug_leads():
 
 @app.post("/api/property/value")
 def property_value():
+    apply_rate_limit(f"{client_ip()}:property_value", max_requests=20)
     data = request.get_json(force=True)
     address = (data.get("address") or "").strip()
     property_type = (data.get("property_type") or "").strip()
@@ -2990,30 +3022,38 @@ def property_value():
         valuation = get_real_valuation(address, property_type)
         return jsonify(valuation)
     except requests.RequestException as error:
-        return jsonify({"error": f"Valuation API request failed: {str(error)}"}), 502
+        app.logger.exception("Valuation API request failed")
+        return jsonify({"error": "Valuation service is temporarily unavailable."}), 502
     except Exception:
+        app.logger.exception("Unexpected valuation error")
         return jsonify({"error": "Unexpected valuation error."}), 500
 
 
 @app.post("/api/property/calculate")
 def property_calculate():
+    apply_rate_limit(f"{client_ip()}:property_calculate", max_requests=30)
     data = request.get_json(force=True)
     try:
         return jsonify(calculate_property_decision(data))
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
     except Exception:
+        app.logger.exception("Unexpected calculator error")
         return jsonify({"error": "Unexpected calculator error."}), 500
 
 
 @app.post("/api/property/lead")
 def property_lead():
+    ip_address = client_ip()
+    apply_rate_limit(f"{ip_address}:property_lead", max_requests=10)
+    apply_daily_ip_limit(f"{ip_address}:property_lead", LEAD_DAILY_IP_LIMIT)
     data = request.get_json(force=True)
     return save_lead_payload(data, create_report=True)
 
 
 @app.post("/api/property/lead-action")
 def property_lead_action():
+    apply_rate_limit(f"{client_ip()}:property_lead_action", max_requests=20)
     data = request.get_json(force=True)
 
     lead_id = data.get("lead_id")
@@ -3029,36 +3069,40 @@ def property_lead_action():
     lead_stage = action
     new_note_line = f"[{updated_at}] lead action: {lead_stage}"
 
-    db = get_db()
-    lead = db.execute("""
-        SELECT id, notes
-        FROM leads
-        WHERE id = ? AND LOWER(email) = ?
-    """, (lead_id, email)).fetchone()
+    try:
+        db = get_db()
+        lead = db.execute("""
+            SELECT id, notes
+            FROM leads
+            WHERE id = ? AND LOWER(email) = ?
+        """, (lead_id, email)).fetchone()
 
-    if lead is None:
-        return jsonify({"success": False, "error": "Lead not found"}), 404
+        if lead is None:
+            return jsonify({"success": False, "error": "Lead not found"}), 404
 
-    existing_notes = lead["notes"] or ""
-    updated_notes = (existing_notes + "\n" + new_note_line).strip()
+        existing_notes = lead["notes"] or ""
+        updated_notes = (existing_notes + "\n" + new_note_line).strip()
 
-    db.execute("""
-        UPDATE leads
-        SET lead_stage = ?,
-            is_hot_lead = 1,
-            updated_at = ?,
-            notes = ?
-        WHERE id = ?
-    """, (lead_stage, updated_at, updated_notes, lead_id))
-    add_lead_note(lead_id, f"Website action: {lead_stage}", user_id=None)
-    create_follow_up_task(
-        lead_id,
-        "Respond to website follow-up request",
-        due_at=(datetime.now() + timedelta(hours=4)).isoformat(),
-        user_id=None,
-    )
-    db.commit()
-    write_audit_log("website_action", "lead", lead_id)
+        db.execute("""
+            UPDATE leads
+            SET lead_stage = ?,
+                is_hot_lead = 1,
+                updated_at = ?,
+                notes = ?
+            WHERE id = ?
+        """, (lead_stage, updated_at, updated_notes, lead_id))
+        add_lead_note(lead_id, f"Website action: {lead_stage}", user_id=None)
+        create_follow_up_task(
+            lead_id,
+            "Respond to website follow-up request",
+            due_at=(datetime.now() + timedelta(hours=4)).isoformat(),
+            user_id=None,
+        )
+        db.commit()
+        write_audit_log("website_action", "lead", lead_id)
+    except Exception:
+        app.logger.exception("Failed to save property lead action")
+        return jsonify({"success": False, "error": "Could not save that request right now."}), 500
 
     return jsonify({
         "success": True,
@@ -3289,15 +3333,13 @@ def save_lead_payload(data, create_report=False):
         notify_new_lead(lead_id, name, email, phone, address, lead_score, selling_timeframe)
         return jsonify(response)
 
-    except Exception as error:
-        return jsonify({"success": False, "error": str(error)}), 500
+    except Exception:
+        app.logger.exception("Failed to save lead payload")
+        return jsonify({"success": False, "error": "Could not save the lead right now."}), 500
 
-@app.route("/save-lead", methods=["GET", "POST"])
+@app.route("/save-lead", methods=["POST"])
 def save_lead():
     validate_internal_api_token()
-
-    if request.method == "GET":
-        return jsonify({"status": "save-lead route is working"})
 
     data = request.get_json(force=True)
     return save_lead_payload(data)
@@ -3358,8 +3400,9 @@ def update_lead():
             "is_hot_lead": bool(is_hot_lead)
         })
 
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Failed to update lead")
+        return jsonify({"success": False, "error": "Could not update the lead right now."}), 500
 def bootstrap_app():
     with app.app_context():
         init_db()

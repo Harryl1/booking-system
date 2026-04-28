@@ -119,10 +119,13 @@
     <div class="card">
         <div class="brand">equiome</div>
         <h1>Create account</h1>
-        <p class="muted">Add a new workspace user.</p>
+        <p class="muted">{% if setup_mode %}Create the first Equiome admin account.{% else %}Add a new workspace user.{% endif %}</p>
 
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            {% if setup_mode %}
+            <input type="hidden" name="setup_token" value="{{ setup_token }}">
+            {% endif %}
 
             <div class="form-group">
                 <label for="username">Username</label>
@@ -140,18 +143,25 @@
                     type="password"
                     id="password"
                     name="password"
-                    minlength="6"
+                    minlength="12"
                     required
                 >
             </div>
 
+            {% if setup_mode %}
+            <input type="hidden" name="role" value="platform_admin">
+            {% else %}
             <div class="form-group">
                 <label for="role">Role</label>
                 <select id="role" name="role" required>
                     <option value="agent">Agent</option>
                     <option value="assessor">Assessor</option>
+                    {% if allow_platform_admin %}
+                    <option value="platform_admin">Equiome admin</option>
+                    {% endif %}
                 </select>
             </div>
+            {% endif %}
 
             <button type="submit">Create account</button>
         </form>
