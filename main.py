@@ -71,7 +71,7 @@ CSV_EXPORT_MAX_ROWS = int(os.environ.get("CSV_EXPORT_MAX_ROWS", "500"))
 RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "60"))
 RATE_LIMIT_MAX_REQUESTS = int(os.environ.get("RATE_LIMIT_MAX_REQUESTS", "30"))
 LEAD_DAILY_IP_LIMIT = int(os.environ.get("LEAD_DAILY_IP_LIMIT", "20"))
-ADMIN_SETUP_TOKEN = os.environ.get("ADMIN_SETUP_TOKEN", "")
+ADMIN_SETUP_TOKEN = os.environ.get("ADMIN_SETUP_TOKEN", "").strip()
 ADMIN_EMAIL_DOMAIN = os.environ.get("ADMIN_EMAIL_DOMAIN", "").strip().lower()
 LEAD_NOTIFICATION_EMAIL = os.environ.get("LEAD_NOTIFICATION_EMAIL", "")
 CUSTOMER_EMAIL_FROM = os.environ.get("CUSTOMER_EMAIL_FROM", "")
@@ -1411,7 +1411,7 @@ def register():
     if setup_mode:
         if not ADMIN_SETUP_TOKEN:
             abort(503, "Admin setup token is not configured")
-        supplied_setup_token = request.values.get("setup_token", "")
+        supplied_setup_token = request.values.get("setup_token", "").strip()
         if not secrets.compare_digest(supplied_setup_token, ADMIN_SETUP_TOKEN):
             abort(403, "Admin setup token is required")
     else:
