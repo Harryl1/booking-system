@@ -10,6 +10,7 @@ import json
 from functools import wraps
 from datetime import datetime, timedelta
 from email.message import EmailMessage
+from urllib.parse import urlparse
 from flask import (
     Flask,
     render_template,
@@ -334,6 +335,9 @@ def init_db():
                 billing_status TEXT NOT NULL DEFAULT 'trial',
                 lead_allowance INTEGER NOT NULL DEFAULT 50,
                 trial_ends_at TEXT,
+                chatbot_enabled INTEGER NOT NULL DEFAULT 1,
+                chatbot_widget_title TEXT NOT NULL DEFAULT 'Property assistant',
+                chatbot_allowed_domain TEXT,
                 created_at TEXT NOT NULL
             )
             """,
@@ -501,6 +505,9 @@ def init_db():
             billing_status TEXT NOT NULL DEFAULT 'trial',
             lead_allowance INTEGER NOT NULL DEFAULT 50,
             trial_ends_at TEXT,
+            chatbot_enabled INTEGER NOT NULL DEFAULT 1,
+            chatbot_widget_title TEXT NOT NULL DEFAULT 'Property assistant',
+            chatbot_allowed_domain TEXT,
             created_at TEXT NOT NULL
         );
 
@@ -709,6 +716,16 @@ def ensure_lead_action_columns():
     user_columns = table_columns(db, "users")
     if "organisation_id" not in user_columns:
         db.execute("ALTER TABLE users ADD COLUMN organisation_id INTEGER")
+
+    organisation_columns = table_columns(db, "organisations")
+    organisation_optional_columns = {
+        "chatbot_enabled": "INTEGER NOT NULL DEFAULT 1",
+        "chatbot_widget_title": "TEXT NOT NULL DEFAULT 'Property assistant'",
+        "chatbot_allowed_domain": "TEXT",
+    }
+    for column_name, column_definition in organisation_optional_columns.items():
+        if column_name not in organisation_columns:
+            db.execute(f"ALTER TABLE organisations ADD COLUMN {column_name} {column_definition}")
 
     ensure_chatbot_tables(db)
     ensure_default_organisation(db)
@@ -1364,6 +1381,24 @@ def truthy(value):
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on", "accepted"}
     return bool(value)
+
+
+def validate_optional_text(value, field_name, max_length=255):
+    value = (value or "").strip()
+    if len(value) > max_length:
+        abort(400, f"{field_name} is too long")
+    return value
+
+
+def normalise_domain(value):
+    value = validate_optional_text(value, "allowed domain", max_length=255).lower()
+    if not value:
+        return None
+    parsed = urlparse(value if "://" in value else f"https://{value}")
+    domain = (parsed.hostname or "").strip(".")
+    if not domain or not re.match(r"^[a-z0-9.-]+\.[a-z]{2,}$", domain):
+        abort(400, "Allowed domain must be a valid website domain")
+    return domain
 
 
 def validate_int(value, field_name, min_value=None, max_value=None):
@@ -2514,6 +2549,29 @@ def organisation_settings():
             db.commit()
             write_audit_log("updated", "organisation", organisation_id)
 
+        elif action == "update_chatbot":
+            widget_title = validate_required_text(
+                request.form.get("chatbot_widget_title"),
+                "chatbot title",
+                max_length=80,
+            )
+            allowed_domain = normalise_domain(request.form.get("chatbot_allowed_domain"))
+            chatbot_enabled = 1 if truthy(request.form.get("chatbot_enabled")) else 0
+            db.execute("""
+                UPDATE organisations
+                SET chatbot_enabled = ?,
+                    chatbot_widget_title = ?,
+                    chatbot_allowed_domain = ?
+                WHERE id = ?
+            """, (
+                chatbot_enabled,
+                widget_title,
+                allowed_domain,
+                organisation_id,
+            ))
+            db.commit()
+            write_audit_log("updated_chatbot", "organisation", organisation_id)
+
         elif action == "add_territory":
             label = validate_required_text(request.form.get("label"), "territory label", max_length=100)
             postcode_prefix = validate_required_text(
@@ -2556,6 +2614,68 @@ def organisation_settings():
         "SELECT COUNT(*) FROM leads WHERE organisation_id = ?",
         (organisation_id,)
     ).fetchone()[0]
+    chatbot_totals = db.execute("""
+        SELECT
+            COUNT(*) AS starts,
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
+            SUM(CASE WHEN lead_id IS NOT NULL THEN 1 ELSE 0 END) AS leads_created,
+            SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closed
+        FROM chatbot_conversations
+        WHERE organisation_id = ?
+    """, (organisation_id,)).fetchone()
+    chatbot_message_count = db.execute("""
+        SELECT COUNT(*) AS total
+        FROM chatbot_messages
+        WHERE session_token IN (
+            SELECT session_token
+            FROM chatbot_conversations
+            WHERE organisation_id = ?
+        )
+    """, (organisation_id,)).fetchone()[0]
+    chatbot_breakdown = db.execute("""
+        SELECT phase, status, COUNT(*) AS total
+        FROM chatbot_conversations
+        WHERE organisation_id = ?
+        GROUP BY phase, status
+        ORDER BY total DESC
+    """, (organisation_id,)).fetchall()
+    chatbot_rows = db.execute("""
+        SELECT captured_data
+        FROM chatbot_conversations
+        WHERE organisation_id = ?
+        ORDER BY created_at DESC
+        LIMIT 250
+    """, (organisation_id,)).fetchall()
+    chatbot_service_counts = {service: 0 for service in SERVICE_LABELS}
+    for row in chatbot_rows:
+        try:
+            captured_data = json.loads(row["captured_data"] or "{}")
+        except json.JSONDecodeError:
+            continue
+        for service in normalise_requested_services(captured_data.get("help_requested") or []):
+            chatbot_service_counts[service] += 1
+
+    chatbot_starts = chatbot_totals["starts"] or 0
+    chatbot_completed = chatbot_totals["completed"] or 0
+    chatbot_leads_created = chatbot_totals["leads_created"] or 0
+    chatbot_analytics = {
+        "starts": chatbot_starts,
+        "completed": chatbot_completed,
+        "leads_created": chatbot_leads_created,
+        "closed": chatbot_totals["closed"] or 0,
+        "completion_rate": round((chatbot_completed / chatbot_starts) * 100) if chatbot_starts else 0,
+        "lead_capture_rate": round((chatbot_leads_created / chatbot_starts) * 100) if chatbot_starts else 0,
+        "average_messages": round(chatbot_message_count / chatbot_starts, 1) if chatbot_starts else 0,
+        "breakdown": chatbot_breakdown,
+        "service_counts": chatbot_service_counts,
+    }
+    chatbot_widget_title = (organisation["chatbot_widget_title"] or "Property assistant").replace('"', "'")
+    embed_code = (
+        f'<script src="{APP_BASE_URL}/static/equiome-chatbot.js" '
+        f'data-api-base="{APP_BASE_URL}" '
+        f'data-organisation-id="{organisation["id"]}" '
+        f'data-title="{chatbot_widget_title}"></script>'
+    )
 
     return render_template(
         "organisation_settings.html",
@@ -2563,6 +2683,9 @@ def organisation_settings():
         territories=territories,
         users=users,
         lead_count=lead_count,
+        chatbot_analytics=chatbot_analytics,
+        chatbot_embed_code=embed_code,
+        service_labels=SERVICE_LABELS,
         csrf_token=get_csrf_token(),
     )
 
@@ -3324,6 +3447,33 @@ def chatbot_update(db, session_token, data, phase, status="active", lead_id=None
     ))
 
 
+def chatbot_host_from_url(value):
+    try:
+        parsed = urlparse(value or "")
+        return (parsed.hostname or "").lower().strip(".")
+    except Exception:
+        return ""
+
+
+def chatbot_domain_allowed(allowed_domain, source_page):
+    allowed_domain = (allowed_domain or "").lower().strip(".")
+    if not allowed_domain:
+        return True
+    source_host = chatbot_host_from_url(source_page)
+    return source_host == allowed_domain or source_host.endswith(f".{allowed_domain}")
+
+
+def get_chatbot_organisation(db, organisation_id):
+    try:
+        organisation_id = int(organisation_id)
+    except (TypeError, ValueError):
+        return None
+    return db.execute(
+        "SELECT id, chatbot_enabled, chatbot_allowed_domain FROM organisations WHERE id = ?",
+        (organisation_id,)
+    ).fetchone()
+
+
 def chatbot_polish_reply(data, phase, draft):
     if not CHATBOT_LLM_ENABLED or not OPENAI_API_KEY:
         return draft
@@ -3570,9 +3720,25 @@ def chatbot_start():
     db = get_db()
     session_token = secrets.token_urlsafe(32)
     now = datetime.now().isoformat()
-    organisation_id = payload.get("organisation_id")
+    organisation = get_chatbot_organisation(db, payload.get("organisation_id"))
+    if organisation is None:
+        organisation_id = default_organisation_id(db)
+        organisation = get_chatbot_organisation(db, organisation_id)
+    if organisation is None or not truthy(organisation["chatbot_enabled"]):
+        return jsonify({"error": "Chatbot is not enabled."}), 403
+
+    source_page = (payload.get("source_page") or "").strip()
+    if not chatbot_domain_allowed(organisation["chatbot_allowed_domain"], source_page):
+        app.logger.warning(
+            "Blocked chatbot start for organisation %s from source %s",
+            organisation["id"],
+            source_page,
+        )
+        return jsonify({"error": "Chatbot is not enabled for this website."}), 403
+
+    organisation_id = organisation["id"]
     data = {
-        "source_page": (payload.get("source_page") or "").strip(),
+        "source_page": source_page,
         "awaiting": "address",
     }
     db.execute("""

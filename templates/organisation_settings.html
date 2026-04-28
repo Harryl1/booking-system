@@ -22,10 +22,16 @@
         .field { margin-bottom:12px; }
         button { border:1px solid var(--border); background:#fff; color:var(--text); border-radius:var(--radius); padding:10px 14px; cursor:pointer; }
         .primary { background:var(--brand2); color:#fff; border:none; }
+        .metric-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px; }
+        .metric { border:1px solid var(--border); border-radius:var(--radius); padding:14px; background:#fbfcfd; }
+        .metric strong { display:block; color:var(--brand); font-size:26px; margin-bottom:4px; }
+        textarea { width:100%; min-height:120px; border:1px solid var(--border); border-radius:var(--radius); padding:12px; font-family:Menlo,Consolas,monospace; font-size:12px; resize:vertical; }
+        .pill { display:inline-block; border:1px solid var(--border); border-radius:999px; padding:5px 9px; margin:0 6px 6px 0; background:#fff; color:var(--muted); font-size:13px; }
         table { width:100%; border-collapse:collapse; }
         th,td { text-align:left; padding:10px; border-bottom:1px solid var(--border); }
         th,.muted { color:var(--muted); font-size:13px; }
-        @media (max-width:800px) { .layout{display:block;} .sidebar{width:auto;} .grid{grid-template-columns:1fr;} }
+        @media (max-width:1000px) { .metric-grid{grid-template-columns:1fr 1fr;} }
+        @media (max-width:800px) { .layout{display:block;} .sidebar{width:auto;} .grid,.metric-grid{grid-template-columns:1fr;} }
     </style>
 </head>
 <body>
@@ -102,6 +108,66 @@
                     <button type="submit" class="primary">Add territory</button>
                 </form>
             </div>
+        </div>
+
+        <div class="grid">
+            <div class="panel">
+                <h3>Website Chatbot</h3>
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="action" value="update_chatbot">
+                    <div class="field">
+                        <label>
+                            <input type="checkbox" name="chatbot_enabled" value="1" {% if organisation["chatbot_enabled"] %}checked{% endif %} style="width:auto;margin-right:6px;">
+                            Enable chatbot
+                        </label>
+                    </div>
+                    <div class="field">
+                        <label>Widget title</label>
+                        <input name="chatbot_widget_title" value="{{ organisation['chatbot_widget_title'] or 'Property assistant' }}" maxlength="80">
+                    </div>
+                    <div class="field">
+                        <label>Allowed website domain</label>
+                        <input name="chatbot_allowed_domain" value="{{ organisation['chatbot_allowed_domain'] or '' }}" placeholder="example-estates.co.uk">
+                        <div class="muted">Leave blank while testing. Add the live domain before wider rollout.</div>
+                    </div>
+                    <button type="submit" class="primary">Save chatbot settings</button>
+                </form>
+            </div>
+
+            <div class="panel">
+                <h3>Embed Code</h3>
+                <p class="muted">Paste this into the website page where the chatbot should appear. It will pin to the bottom-right of the page.</p>
+                <textarea id="chatbot-embed-code" readonly>{{ chatbot_embed_code }}</textarea>
+                <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('chatbot-embed-code').value)">Copy embed code</button>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h3>Chatbot Analytics</h3>
+            <div class="metric-grid">
+                <div class="metric"><strong>{{ chatbot_analytics.starts }}</strong><span class="muted">Started chats</span></div>
+                <div class="metric"><strong>{{ chatbot_analytics.completed }}</strong><span class="muted">Completed chats</span></div>
+                <div class="metric"><strong>{{ chatbot_analytics.leads_created }}</strong><span class="muted">Leads created</span></div>
+                <div class="metric"><strong>{{ chatbot_analytics.lead_capture_rate }}%</strong><span class="muted">Lead capture rate</span></div>
+            </div>
+            <p class="muted">
+                Completion rate {{ chatbot_analytics.completion_rate }}%.
+                Average messages per started chat {{ chatbot_analytics.average_messages }}.
+                Closed before completion {{ chatbot_analytics.closed }}.
+            </p>
+            <div>
+                {% for service, total in chatbot_analytics.service_counts.items() %}
+                    <span class="pill">{{ service_labels[service] }}: {{ total }}</span>
+                {% endfor %}
+            </div>
+            <table>
+                <tr><th>Phase</th><th>Status</th><th>Chats</th></tr>
+                {% for row in chatbot_analytics.breakdown %}
+                    <tr><td>{{ row["phase"]|title }}</td><td>{{ row["status"]|title }}</td><td>{{ row["total"] }}</td></tr>
+                {% endfor %}
+            </table>
+            {% if not chatbot_analytics.breakdown %}<p class="muted">No chatbot conversations yet.</p>{% endif %}
         </div>
 
         <div class="panel">
