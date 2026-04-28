@@ -4,8 +4,10 @@
   var organisationId = script.getAttribute && script.getAttribute("data-organisation-id");
   var title = (script.getAttribute && script.getAttribute("data-title")) || "Property assistant";
   var api = apiBase || "https://booking-system-b13f.onrender.com";
+  var storageKey = "equiomeChatbot:" + (organisationId || "default");
   var sessionToken = "";
   var isOpen = false;
+  var savedMessages = [];
 
   function el(tag, attrs, text) {
     var node = document.createElement(tag);
@@ -32,7 +34,27 @@
     });
   }
 
-  function addMessage(list, role, message) {
+  function saveState() {
+    try {
+      sessionStorage.setItem(storageKey, JSON.stringify({
+        session_token: sessionToken,
+        messages: savedMessages.slice(-40)
+      }));
+    } catch (err) {}
+  }
+
+  function restoreState() {
+    try {
+      var state = JSON.parse(sessionStorage.getItem(storageKey) || "{}");
+      sessionToken = state.session_token || "";
+      savedMessages = state.messages || [];
+    } catch (err) {
+      sessionToken = "";
+      savedMessages = [];
+    }
+  }
+
+  function addMessage(list, role, message, skipSave) {
     var bubble = el("div", {
       style:
         "max-width:86%;padding:10px 12px;border-radius:12px;margin:8px 0;line-height:1.4;font-size:14px;" +
@@ -42,6 +64,19 @@
     }, message);
     list.appendChild(bubble);
     list.scrollTop = list.scrollHeight;
+    if (!skipSave) {
+      savedMessages.push({ role: role, message: message });
+      saveState();
+    }
+    return bubble;
+  }
+
+  function addTyping(list) {
+    return addMessage(list, "assistant", "Aria is typing...", true);
+  }
+
+  function removeTyping(node) {
+    if (node && node.parentNode) node.parentNode.removeChild(node);
   }
 
   function setBusy(input, button, busy) {
@@ -71,6 +106,7 @@
   }
 
   function init() {
+    restoreState();
     var root = el("div", {
       style: "position:fixed;right:18px;bottom:18px;z-index:99999;font-family:Arial,sans-serif;"
     });
@@ -78,7 +114,7 @@
     var launcher = el("button", {
       type: "button",
       style: "border:none;background:#12344d;color:#fff;border-radius:999px;padding:13px 16px;box-shadow:0 10px 30px rgba(18,52,77,.22);cursor:pointer;font-weight:bold;"
-    }, "Chat property plans");
+    }, "Chat about your property");
 
     var panel = el("div", {
       style: "display:none;flex-direction:column;width:min(380px,calc(100vw - 28px));height:min(620px,calc(100vh - 28px));background:#fff;border:1px solid #d7dee7;border-radius:10px;box-shadow:0 18px 50px rgba(18,52,77,.22);overflow:hidden;"
@@ -96,6 +132,9 @@
 
     var list = el("div", {
       style: "flex:1;padding:14px;overflow:auto;background:#fff;"
+    });
+    savedMessages.forEach(function (item) {
+      addMessage(list, item.role, item.message, true);
     });
 
     var form = el("form", {
@@ -120,13 +159,16 @@
       input.value = "";
       addMessage(list, "user", message);
       setBusy(input, send, true);
+      var typing = addTyping(list);
       post("/api/chatbot/message", {
         session_token: sessionToken,
         message: message
       }).then(function (data) {
+        removeTyping(typing);
         addMessage(list, "assistant", data.message || "Thanks.");
         setBusy(input, send, false);
       }).catch(function (err) {
+        removeTyping(typing);
         addMessage(list, "assistant", err.message || "Something went wrong. Please try again.");
         setBusy(input, send, false);
       });
@@ -139,6 +181,9 @@
       if (sessionToken) {
         post("/api/chatbot/end", { session_token: sessionToken }).catch(function () {});
       }
+      sessionStorage.removeItem(storageKey);
+      sessionToken = "";
+      savedMessages = [];
     };
 
     launcher.onclick = function () {

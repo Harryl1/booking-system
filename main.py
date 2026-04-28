@@ -78,6 +78,9 @@ ADMIN_EMAIL_DOMAIN = os.environ.get("ADMIN_EMAIL_DOMAIN", "").strip().lower()
 CHATBOT_LLM_ENABLED = os.environ.get("CHATBOT_LLM_ENABLED", "0") == "1"
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 CHATBOT_LLM_MODEL = os.environ.get("CHATBOT_LLM_MODEL", "gpt-4o-mini")
+CHATBOT_MAX_TURNS = int(os.environ.get("CHATBOT_MAX_TURNS", "50"))
+CHATBOT_DAILY_IP_LIMIT = int(os.environ.get("CHATBOT_DAILY_IP_LIMIT", "50"))
+CHATBOT_RETENTION_DAYS = int(os.environ.get("CHATBOT_RETENTION_DAYS", "180"))
 LEAD_NOTIFICATION_EMAIL = os.environ.get("LEAD_NOTIFICATION_EMAIL", "")
 CUSTOMER_EMAIL_FROM = os.environ.get("CUSTOMER_EMAIL_FROM", "")
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
@@ -95,7 +98,11 @@ os.makedirs(REPORTS_DIR, exist_ok=True)
 @app.after_request
 def add_security_headers(response):
     if request.path.startswith("/api/property/") or request.path.startswith("/api/chatbot/"):
-        response.headers["Access-Control-Allow-Origin"] = FRONTEND_ORIGIN
+        origin = request.headers.get("Origin", "")
+        allowed_origin = cors_allowed_origin(origin)
+        if allowed_origin:
+            response.headers["Access-Control-Allow-Origin"] = allowed_origin
+            response.headers["Vary"] = "Origin"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
         response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
 
@@ -921,6 +928,50 @@ def apply_daily_ip_limit(key, max_requests):
     DAILY_LIMIT_BUCKETS[bucket_key] += 1
 
 
+def origin_host(value):
+    try:
+        return (urlparse(value or "").hostname or "").lower().strip(".")
+    except Exception:
+        return ""
+
+
+def cors_allowed_origin(origin):
+    if not origin:
+        return ""
+    if FRONTEND_ORIGIN == "*":
+        return origin
+    allowed_origins = {
+        FRONTEND_ORIGIN.rstrip("/"),
+        APP_BASE_URL.rstrip("/"),
+        "https://property-decision-tool.onrender.com",
+        "https://booking-system-b13f.onrender.com",
+    }
+    if origin.rstrip("/") in allowed_origins:
+        return origin
+    if not request.path.startswith("/api/chatbot/"):
+        return ""
+
+    host = origin_host(origin)
+    if not host:
+        return ""
+    try:
+        db = get_db()
+        rows = db.execute("""
+            SELECT chatbot_allowed_domain
+            FROM organisations
+            WHERE chatbot_enabled = 1
+              AND chatbot_allowed_domain IS NOT NULL
+              AND chatbot_allowed_domain != ''
+        """).fetchall()
+        for row in rows:
+            allowed_domain = (row["chatbot_allowed_domain"] or "").lower().strip(".")
+            if host == allowed_domain or host.endswith(f".{allowed_domain}"):
+                return origin
+    except Exception:
+        app.logger.exception("Failed to evaluate chatbot CORS origin")
+    return ""
+
+
 def write_audit_log(action, entity_type, entity_id=None):
     try:
         db = get_db()
@@ -1348,6 +1399,27 @@ def cleanup_expired_leads():
     db.commit()
 
 
+def cleanup_expired_chatbot_data():
+    db = get_db()
+    cutoff = (datetime.now() - timedelta(days=CHATBOT_RETENTION_DAYS)).isoformat()
+    db.execute("""
+        DELETE FROM chatbot_messages
+        WHERE session_token IN (
+            SELECT session_token
+            FROM chatbot_conversations
+            WHERE updated_at < ?
+        )
+    """, (cutoff,))
+    db.execute("""
+        UPDATE chatbot_conversations
+        SET captured_data = '{}',
+            ai_summary = NULL,
+            source_page = NULL
+        WHERE updated_at < ?
+    """, (cutoff,))
+    db.commit()
+
+
 @app.before_request
 def apply_retention_housekeeping():
     if request.endpoint == "static":
@@ -1356,6 +1428,7 @@ def apply_retention_housekeeping():
         return
     cleanup_expired_reports()
     cleanup_expired_leads()
+    cleanup_expired_chatbot_data()
     session["last_retention_check"] = datetime.now().date().isoformat()
 
 
@@ -3268,12 +3341,98 @@ CHATBOT_PHASE_HANDOFF = "handoff"
 CHATBOT_PHASE_DONE = "done"
 
 
+NUMBER_WORDS = {
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fourty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+}
+
+
+def parse_number_words(text):
+    total = 0
+    current = 0
+    found = False
+    for word in re.sub(r"[^a-z\s-]", " ", (text or "").lower()).replace("-", " ").split():
+        if word in NUMBER_WORDS:
+            current += NUMBER_WORDS[word]
+            found = True
+        elif word == "hundred" and current:
+            current *= 100
+            found = True
+        elif word in {"thousand", "grand"} and current:
+            total += current * 1000
+            current = 0
+            found = True
+        elif word in {"million", "millions"} and current:
+            total += current * 1000000
+            current = 0
+            found = True
+    return total + current if found else None
+
+
+def parse_money(value, default=0):
+    text = (value or "").strip().lower().replace(",", "")
+    if text in {"", "skip", "none", "no", "nil", "zero", "owned outright", "outright"}:
+        return default
+
+    match = re.search(r"(\d+(?:\.\d+)?)\s*(k|m|thousand|grand|million|millions)?\b", text)
+    if match:
+        amount = float(match.group(1))
+        suffix = match.group(2) or ""
+        if suffix in {"k", "thousand", "grand"}:
+            amount *= 1000
+        elif suffix in {"m", "million", "millions"}:
+            amount *= 1000000
+        return amount
+
+    words_amount = parse_number_words(text)
+    if words_amount is not None:
+        return float(words_amount)
+    return default
+
+
 def chatbot_money(value):
     return f"£{round(to_float(value, 0)):,.0f}"
 
 
 def chatbot_yes(value):
-    return (value or "").strip().lower() in {"yes", "y", "yeah", "yep", "ok", "okay", "sure", "please", "accepted", "i agree"}
+    text = re.sub(r"[^a-z\s]", " ", (value or "").strip().lower())
+    tokens = set(text.split())
+    yes_tokens = {"yes", "y", "yeah", "yep", "ok", "okay", "sure", "please", "agree", "accepted", "fine"}
+    return bool(tokens & yes_tokens) or "i agree" in text or "go ahead" in text
+
+
+def chatbot_no(value):
+    text = re.sub(r"[^a-z\s]", " ", (value or "").strip().lower())
+    tokens = set(text.split())
+    no_tokens = {"no", "n", "nope", "nah", "decline", "declined", "skip", "none"}
+    return bool(tokens & no_tokens) or "no thanks" in text or "not now" in text
 
 
 def chatbot_property_type(value):
@@ -3291,16 +3450,16 @@ def chatbot_property_type(value):
 
 def chatbot_timeframe(value):
     text = (value or "").strip().lower()
-    if "0" in text or "3" in text or "soon" in text or "asap" in text:
-        return "0-3 months"
-    if "6" in text:
-        return "3-6 months"
-    if "9" in text:
-        return "6-9 months"
-    if "12" in text or "year" in text:
-        return "9-12 months"
-    if "explor" in text or "curious" in text or "not sure" in text:
+    if any(phrase in text for phrase in ["just exploring", "just curious", "only curious", "not sure", "no rush", "browsing"]):
         return "Just exploring"
+    if re.search(r"\b(0\s*-\s*3|0\s*to\s*3|under\s*3|less than\s*3|within\s*3|within\s*three|next few|asap|soon|immediately)\b", text):
+        return "0-3 months"
+    if re.search(r"\b(3\s*-\s*6|3\s*to\s*6|three\s*to\s*six|around\s*3|in\s*3|around\s*three|in\s*three|within\s*6|within\s*six|next\s*6)\b", text):
+        return "3-6 months"
+    if re.search(r"\b(6\s*-\s*9|6\s*to\s*9|six\s*to\s*nine|around\s*6|in\s*6|around\s*six|within\s*9|within\s*nine|next\s*9)\b", text):
+        return "6-9 months"
+    if re.search(r"\b(9\s*-\s*12|9\s*to\s*12|nine\s*to\s*twelve|around\s*9|in\s*9|around\s*nine|in\s*12|within\s*12|within\s*twelve|year|next year)\b", text):
+        return "9-12 months"
     return ""
 
 
@@ -3404,6 +3563,15 @@ def chatbot_services(value):
     return normalise_requested_services(services)
 
 
+def chatbot_special_response(message):
+    text = (message or "").strip().lower()
+    if any(phrase in text for phrase in ["are you real", "real person", "human", "am i speaking to"]):
+        return "I’m Aria, Equiome’s automated property assistant. I can collect the details for your report, and a real person can follow up if you ask for one."
+    if any(phrase in text for phrase in ["what rate", "mortgage rate", "interest rate", "can i borrow", "will i get a mortgage", "specific mortgage"]):
+        return "I can give a broad affordability estimate, but I can’t give regulated mortgage advice. A qualified mortgage adviser would need to look at your circumstances properly."
+    return ""
+
+
 def chatbot_summary(data):
     motivation = data.get("motivation") or "No motivation supplied"
     motivation_category = data.get("motivation_category") or "uncategorised"
@@ -3479,6 +3647,12 @@ def chatbot_polish_reply(data, phase, draft):
         return draft
     if "£" in draft or phase in {CHATBOT_PHASE_CALCULATE, CHATBOT_PHASE_DONE}:
         return draft
+    phase_tone = {
+        CHATBOT_PHASE_OPEN: "Clear and calm. Help the homeowner know what to answer next.",
+        CHATBOT_PHASE_DISCOVER: "Unhurried and gently curious. Do not sound pushy.",
+        CHATBOT_PHASE_OFFER: "Light, optional, and commercially neutral. Never pressure the user.",
+        CHATBOT_PHASE_HANDOFF: "Warm and concise.",
+    }.get(phase, "Warm and concise.")
     try:
         response = requests.post(
             "https://api.openai.com/v1/chat/completions",
@@ -3494,8 +3668,13 @@ def chatbot_polish_reply(data, phase, draft):
                         "content": (
                             "Rewrite the assistant message for a UK property chatbot called Aria. "
                             "Keep the same meaning and ask for the same information. "
-                            "Use warm, concise British English. Do not add facts, figures, advice, promises, "
-                            "or extra questions. Do not use exclamation marks. Return only the rewritten message."
+                            "Use warm, concise British English and a natural estate-agency register. "
+                            f"Tone for this phase: {phase_tone} "
+                            "Do not add facts, figures, advice, promises, or extra questions. "
+                            "Do not use regulated mortgage advice language. If the context is sensitive, be calm and plain. "
+                            "Avoid phrases such as absolutely, certainly, I understand, no worries, guarantee, definitely, "
+                            "legal advice, financial advice, and I am a real person. "
+                            "Do not use exclamation marks. Return only the rewritten message."
                         ),
                     },
                     {
@@ -3512,7 +3691,17 @@ def chatbot_polish_reply(data, phase, draft):
         polished = response.json()["choices"][0]["message"]["content"].strip()
         if not polished or "£" in polished or len(polished) > 500:
             return draft
-        forbidden = ["guarantee", "definitely", "financial advice", "legal advice", "i am a real person"]
+        forbidden = [
+            "guarantee",
+            "definitely",
+            "financial advice",
+            "legal advice",
+            "i am a real person",
+            "absolutely",
+            "certainly",
+            "i understand",
+            "no worries",
+        ]
         if any(term in polished.lower() for term in forbidden):
             return draft
         return polished
@@ -3591,26 +3780,57 @@ def chatbot_apply_answer(data, message):
         if message.strip().lower() in {"none", "no", "owned outright", "outright", "0"}:
             data["mortgage"] = 0
         else:
-            data["mortgage"] = to_float(re.sub(r"[^\d.]", "", message), 0)
+            data["mortgage"] = parse_money(message, 0)
     elif field == "plan":
         parsed = chatbot_plan(message)
         if not parsed:
             return "Please say buying, renting, or just exploring."
         data["plan"] = parsed
     elif field == "income":
-        data["income"] = to_float(re.sub(r"[^\d.]", "", message), 0)
+        data["income"] = parse_money(message, 0)
     elif field == "target_price":
         if message.strip().lower() in {"skip", "no", "none", "not sure"}:
             data["target_price"] = 0
         else:
-            data["target_price"] = to_float(re.sub(r"[^\d.]", "", message), 0)
-    elif field == "services":
-        data["help_requested"] = chatbot_services(message)
+            data["target_price"] = parse_money(message, 0)
+    elif field in {"service_valuation", "service_mortgage", "service_solicitor", "service_epc"}:
+        if "all" in message.strip().lower():
+            data["help_requested"] = [SERVICE_VALUATION, SERVICE_MORTGAGE, SERVICE_SOLICITOR, SERVICE_EPC]
+            data["skip_remaining_services"] = True
+        elif chatbot_no(message) and field == "service_valuation" and any(term in message.strip().lower() for term in ["none", "no thanks", "nothing"]):
+            data["help_requested"] = []
+            data["skip_remaining_services"] = True
+        elif chatbot_yes(message):
+            service = field.replace("service_", "")
+            requested = data.setdefault("help_requested", [])
+            if service not in requested:
+                requested.append(service)
+        elif not chatbot_no(message):
+            parsed_services = chatbot_services(message)
+            if parsed_services:
+                requested = data.setdefault("help_requested", [])
+                for service in parsed_services:
+                    if service not in requested:
+                        requested.append(service)
+            else:
+                return "Please reply yes or no, or say all or none."
     elif field == "full_name":
+        if chatbot_no(message):
+            data["declined_contact_details"] = True
+            data["awaiting"] = ""
+            return ""
         data["full_name"] = message.strip()
     elif field == "email":
+        if chatbot_no(message):
+            data["declined_contact_details"] = True
+            data["awaiting"] = ""
+            return ""
         data["email"] = message.strip().lower()
     elif field == "phone":
+        if chatbot_no(message):
+            data["declined_contact_details"] = True
+            data["awaiting"] = ""
+            return ""
         data["phone"] = message.strip()
         preferred_contact = chatbot_preferred_contact(message)
         if preferred_contact:
@@ -3639,14 +3859,15 @@ def chatbot_calculate(data):
     })
     data["valuation"] = valuation
     data["calculation"] = calculation
-    data["awaiting"] = "services"
+    data["awaiting"] = "service_valuation"
+    data.setdefault("help_requested", [])
     return (
         f"Based on what you’ve told me, the property is likely worth between "
         f"{chatbot_money(valuation.get('low'))} and {chatbot_money(valuation.get('high'))}. "
         f"After the mortgage and typical selling costs, the estimated available equity is "
         f"{chatbot_money(calculation.get('net_proceeds'))}. "
         f"The estimated next budget is {chatbot_money(calculation.get('max_budget'))}. "
-        "Would you like help with a local valuation, mortgage advice, solicitor/conveyancing quote, or EPC? You can say any, all, or none."
+        "Would you like a local agent to help confirm the property value?"
     )
 
 
@@ -3683,9 +3904,24 @@ def chatbot_prepare_lead_payload(data, transcript):
 
 
 def chatbot_continue(data):
-    if data.get("calculation") and data.get("awaiting") == "services" and "help_requested" in data:
+    if data.get("declined_contact_details"):
+        data["awaiting"] = ""
+        return CHATBOT_PHASE_DONE, "No problem. I won’t save your contact details or create a lead. You can start again whenever you want a full report or follow-up."
+    if data.get("calculation") and data.get("skip_remaining_services"):
         data["awaiting"] = "full_name"
         return CHATBOT_PHASE_OFFER, "Thanks. To send your report and arrange any follow-up, what’s your full name?"
+    if data.get("calculation") and data.get("awaiting") == "service_valuation":
+        data["awaiting"] = "service_mortgage"
+        return CHATBOT_PHASE_OFFER, "Would it help to have a mortgage adviser call you about your next budget?"
+    if data.get("awaiting") == "service_mortgage":
+        data["awaiting"] = "service_solicitor"
+        return CHATBOT_PHASE_OFFER, "Would you like a conveyancing or solicitor quote as well?"
+    if data.get("awaiting") == "service_solicitor":
+        data["awaiting"] = "service_epc"
+        return CHATBOT_PHASE_OFFER, "Do you need help arranging an EPC?"
+    if data.get("awaiting") == "service_epc":
+        data["awaiting"] = "full_name"
+        return CHATBOT_PHASE_OFFER, "Thanks. To send your report and arrange any follow-up, what’s your full name? You can say no thanks if you’d rather stop here."
     if data.get("awaiting") == "full_name" and data.get("full_name"):
         data["awaiting"] = "email"
         return CHATBOT_PHASE_OFFER, "And what email should I send the report to?"
@@ -3715,7 +3951,9 @@ def chatbot_continue(data):
 
 @app.post("/api/chatbot/start")
 def chatbot_start():
-    apply_rate_limit(f"{client_ip()}:chatbot_start", max_requests=20)
+    ip_address = client_ip()
+    apply_rate_limit(f"{ip_address}:chatbot_start", max_requests=20)
+    apply_daily_ip_limit(f"{ip_address}:chatbot_start", CHATBOT_DAILY_IP_LIMIT)
     payload = request.get_json(silent=True) or {}
     db = get_db()
     session_token = secrets.token_urlsafe(32)
@@ -3728,11 +3966,12 @@ def chatbot_start():
         return jsonify({"error": "Chatbot is not enabled."}), 403
 
     source_page = (payload.get("source_page") or "").strip()
-    if not chatbot_domain_allowed(organisation["chatbot_allowed_domain"], source_page):
+    origin = request.headers.get("Origin", "")
+    if not chatbot_domain_allowed(organisation["chatbot_allowed_domain"], origin or source_page):
         app.logger.warning(
             "Blocked chatbot start for organisation %s from source %s",
             organisation["id"],
-            source_page,
+            origin or source_page,
         )
         return jsonify({"error": "Chatbot is not enabled for this website."}), 403
 
@@ -3783,8 +4022,29 @@ def chatbot_message():
         return jsonify({"error": "Conversation not found."}), 404
     if conversation["status"] == "completed":
         return jsonify({"phase": CHATBOT_PHASE_DONE, "message": "This chat is already complete."})
+    message_count = db.execute(
+        "SELECT COUNT(*) AS total FROM chatbot_messages WHERE session_token = ?",
+        (session_token,)
+    ).fetchone()["total"]
+    if CHATBOT_MAX_TURNS > 0 and message_count >= CHATBOT_MAX_TURNS:
+        data = json.loads(conversation["captured_data"] or "{}")
+        data["turn_cap_reached"] = True
+        assistant_message = "I’m going to pause this chat here so it doesn’t go in circles. You can start a fresh chat if you’d like to continue."
+        chatbot_add_message(db, session_token, "assistant", assistant_message)
+        chatbot_update(db, session_token, data, CHATBOT_PHASE_DONE, status="closed")
+        db.commit()
+        return jsonify({"phase": CHATBOT_PHASE_DONE, "message": assistant_message}), 429
 
     data = json.loads(conversation["captured_data"] or "{}")
+    special_response = chatbot_special_response(user_message)
+    if special_response:
+        chatbot_add_message(db, session_token, "user", user_message)
+        assistant_message = chatbot_reply(data, conversation["phase"], special_response)
+        chatbot_add_message(db, session_token, "assistant", assistant_message)
+        chatbot_update(db, session_token, data, conversation["phase"])
+        db.commit()
+        return jsonify({"phase": conversation["phase"], "message": assistant_message})
+
     chatbot_add_message(db, session_token, "user", user_message)
     validation_message = chatbot_apply_answer(data, user_message)
     if validation_message:
@@ -3802,6 +4062,11 @@ def chatbot_message():
         except Exception:
             app.logger.exception("Chatbot calculation failed")
             return jsonify({"error": "I couldn’t calculate that right now. Please try again shortly."}), 500
+    elif phase == CHATBOT_PHASE_DONE and data.get("declined_contact_details"):
+        chatbot_add_message(db, session_token, "assistant", assistant_message)
+        chatbot_update(db, session_token, data, phase, status="closed")
+        db.commit()
+        return jsonify({"phase": phase, "message": assistant_message})
     elif phase == CHATBOT_PHASE_HANDOFF:
         messages = db.execute(
             "SELECT role, message FROM chatbot_messages WHERE session_token = ? ORDER BY id ASC",
@@ -4267,6 +4532,7 @@ def bootstrap_app():
         ensure_lead_action_columns()
         cleanup_expired_reports()
         cleanup_expired_leads()
+        cleanup_expired_chatbot_data()
 
 
 bootstrap_app()
