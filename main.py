@@ -74,6 +74,9 @@ RATE_LIMIT_MAX_REQUESTS = int(os.environ.get("RATE_LIMIT_MAX_REQUESTS", "30"))
 LEAD_DAILY_IP_LIMIT = int(os.environ.get("LEAD_DAILY_IP_LIMIT", "20"))
 ADMIN_SETUP_TOKEN = os.environ.get("ADMIN_SETUP_TOKEN", "").strip()
 ADMIN_EMAIL_DOMAIN = os.environ.get("ADMIN_EMAIL_DOMAIN", "").strip().lower()
+CHATBOT_LLM_ENABLED = os.environ.get("CHATBOT_LLM_ENABLED", "0") == "1"
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+CHATBOT_LLM_MODEL = os.environ.get("CHATBOT_LLM_MODEL", "gpt-4o-mini")
 LEAD_NOTIFICATION_EMAIL = os.environ.get("LEAD_NOTIFICATION_EMAIL", "")
 CUSTOMER_EMAIL_FROM = os.environ.get("CUSTOMER_EMAIL_FROM", "")
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
@@ -1991,7 +1994,12 @@ def lead_detail(lead_id):
         ORDER BY created_at DESC
     """, (lead_id,)).fetchall()
     chatbot_messages = []
+    chatbot_data = {}
     if chatbot_conversations:
+        try:
+            chatbot_data = json.loads(chatbot_conversations[0]["captured_data"] or "{}")
+        except json.JSONDecodeError:
+            chatbot_data = {}
         chatbot_messages = db.execute("""
             SELECT *
             FROM chatbot_messages
@@ -2008,6 +2016,7 @@ def lead_detail(lead_id):
         referrals=referrals,
         chatbot_conversations=chatbot_conversations,
         chatbot_messages=chatbot_messages,
+        chatbot_data=chatbot_data,
         next_action=best_next_action(lead, tasks, referrals),
         score_factors=lead_score_factors(lead, referrals),
         referral_score_factors=referral_score_factors(lead, referrals),
@@ -3176,11 +3185,82 @@ def chatbot_plan(value):
     text = (value or "").strip().lower()
     if "rent" in text:
         return "rent"
-    if "buy" in text or "purchase" in text:
+    if "buy" in text or "buying" in text or "purchase" in text or "next property" in text or "new home" in text:
         return "buy"
     if "explor" in text or "not sure" in text or "unsure" in text:
         return "exploring"
     return ""
+
+
+def chatbot_motivation_category(value):
+    text = (value or "").strip().lower()
+    if any(word in text for word in ["upsize", "bigger", "baby", "family", "bedroom"]):
+        return "upsizing"
+    if any(word in text for word in ["downsize", "smaller", "bungalow", "retire"]):
+        return "downsizing"
+    if any(word in text for word in ["relocat", "work", "job", "move area"]):
+        return "relocating"
+    if any(word in text for word in ["equity", "release money", "cash"]):
+        return "equity_release"
+    if any(word in text for word in ["divorce", "separat", "split"]):
+        return "separation"
+    if any(word in text for word in ["financial", "struggling", "payment", "afford"]):
+        return "financial"
+    if any(word in text for word in ["curious", "explor", "nosy", "browsing"]):
+        return "exploring"
+    if chatbot_plan(text) == "buy":
+        return "buying_next"
+    return ""
+
+
+def chatbot_preferred_contact(value):
+    text = (value or "").strip().lower()
+    if "email" in text:
+        return "email"
+    if "phone" in text or "call" in text:
+        return "phone"
+    if "text" in text or "sms" in text:
+        return "text"
+    return ""
+
+
+def chatbot_detect_objection(value):
+    text = (value or "").strip().lower()
+    if any(word in text for word in ["low", "high", "wrong", "expected", "estimate", "valuation", "worth more", "worth less"]):
+        return value.strip()
+    return ""
+
+
+def chatbot_infer_fields(data, message):
+    plan = chatbot_plan(message)
+    if plan and not data.get("plan"):
+        data["plan"] = plan
+
+    timeframe = chatbot_timeframe(message)
+    if timeframe and not data.get("selling_timeframe"):
+        data["selling_timeframe"] = timeframe
+
+    property_type = chatbot_property_type(message)
+    if property_type and not data.get("property_type"):
+        data["property_type"] = property_type
+
+    motivation_category = chatbot_motivation_category(message)
+    if motivation_category and not data.get("motivation_category"):
+        data["motivation_category"] = motivation_category
+
+    preferred_contact = chatbot_preferred_contact(message)
+    if preferred_contact and not data.get("preferred_contact"):
+        data["preferred_contact"] = preferred_contact
+
+    if data.get("calculation"):
+        objection = chatbot_detect_objection(message)
+        if objection:
+            objections = data.setdefault("objections_raised", [])
+            if objection not in objections:
+                objections.append(objection)
+
+    if any(word in message.strip().lower() for word in ["divorce", "separat", "bereav", "passed away", "financial pressure"]):
+        data["sensitive_context"] = True
 
 
 def chatbot_services(value):
@@ -3203,12 +3283,16 @@ def chatbot_services(value):
 
 def chatbot_summary(data):
     motivation = data.get("motivation") or "No motivation supplied"
+    motivation_category = data.get("motivation_category") or "uncategorised"
     timeframe = data.get("selling_timeframe") or "No timeframe supplied"
+    plan = data.get("plan") or "No next-step plan supplied"
     services = data.get("help_requested") or []
     service_text = ", ".join(SERVICE_LABELS.get(service, service) for service in services) or "no services requested"
+    objections = "; ".join(data.get("objections_raised") or []) or "none captured"
     return (
-        f"Chatbot lead. Motivation: {motivation}. Timeframe: {timeframe}. "
-        f"Requested services: {service_text}. Condition notes: {data.get('condition') or 'not supplied'}."
+        f"Chatbot lead. Motivation: {motivation}. Category: {motivation_category}. "
+        f"Plan: {plan}. Timeframe: {timeframe}. Requested services: {service_text}. "
+        f"Condition notes: {data.get('condition') or 'not supplied'}. Objections: {objections}."
     )
 
 
@@ -3238,6 +3322,57 @@ def chatbot_update(db, session_token, data, phase, status="active", lead_id=None
         datetime.now().isoformat(),
         session_token,
     ))
+
+
+def chatbot_polish_reply(data, phase, draft):
+    if not CHATBOT_LLM_ENABLED or not OPENAI_API_KEY:
+        return draft
+    if "£" in draft or phase in {CHATBOT_PHASE_CALCULATE, CHATBOT_PHASE_DONE}:
+        return draft
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": CHATBOT_LLM_MODEL,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Rewrite the assistant message for a UK property chatbot called Aria. "
+                            "Keep the same meaning and ask for the same information. "
+                            "Use warm, concise British English. Do not add facts, figures, advice, promises, "
+                            "or extra questions. Do not use exclamation marks. Return only the rewritten message."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Captured data: {json.dumps(data, ensure_ascii=True)[:1500]}\nMessage: {draft}",
+                    },
+                ],
+                "temperature": 0.4,
+                "max_tokens": 120,
+            },
+            timeout=8,
+        )
+        response.raise_for_status()
+        polished = response.json()["choices"][0]["message"]["content"].strip()
+        if not polished or "£" in polished or len(polished) > 500:
+            return draft
+        forbidden = ["guarantee", "definitely", "financial advice", "legal advice", "i am a real person"]
+        if any(term in polished.lower() for term in forbidden):
+            return draft
+        return polished
+    except Exception:
+        app.logger.exception("Chatbot LLM rewrite failed")
+        return draft
+
+
+def chatbot_reply(data, phase, draft):
+    return chatbot_polish_reply(data, phase, draft)
 
 
 def chatbot_question(data):
@@ -3277,8 +3412,10 @@ def chatbot_question(data):
 
 def chatbot_apply_answer(data, message):
     field = data.get("awaiting")
+    chatbot_infer_fields(data, message)
     if field == "address":
         data["address"] = message.strip()
+        chatbot_infer_fields(data, message)
     elif field == "property_type":
         parsed = chatbot_property_type(message)
         if not parsed:
@@ -3293,6 +3430,8 @@ def chatbot_apply_answer(data, message):
         data["condition"] = message.strip()
     elif field == "motivation":
         data["motivation"] = message.strip()
+        if not data.get("motivation_category"):
+            data["motivation_category"] = chatbot_motivation_category(message)
     elif field == "selling_timeframe":
         parsed = chatbot_timeframe(message)
         if not parsed:
@@ -3323,6 +3462,9 @@ def chatbot_apply_answer(data, message):
         data["email"] = message.strip().lower()
     elif field == "phone":
         data["phone"] = message.strip()
+        preferred_contact = chatbot_preferred_contact(message)
+        if preferred_contact:
+            data["preferred_contact"] = preferred_contact
     elif field == "privacy":
         data["privacy_notice_accepted"] = chatbot_yes(message)
         if not data["privacy_notice_accepted"]:
@@ -3447,7 +3589,11 @@ def chatbot_start():
         now,
         now,
     ))
-    message = "Hi, I’m Aria, Equiome’s property assistant. I’ll ask a few questions and then put together your personalised report. What’s the address of the property?"
+    message = chatbot_reply(
+        data,
+        CHATBOT_PHASE_OPEN,
+        "Hi, I’m Aria, Equiome’s property assistant. I’ll ask a few questions and then put together your personalised report. What’s the address of the property?",
+    )
     chatbot_add_message(db, session_token, "assistant", message)
     db.commit()
     return jsonify({"session_token": session_token, "phase": CHATBOT_PHASE_OPEN, "message": message})
@@ -3476,6 +3622,7 @@ def chatbot_message():
     chatbot_add_message(db, session_token, "user", user_message)
     validation_message = chatbot_apply_answer(data, user_message)
     if validation_message:
+        validation_message = chatbot_reply(data, conversation["phase"], validation_message)
         chatbot_add_message(db, session_token, "assistant", validation_message)
         chatbot_update(db, session_token, data, conversation["phase"])
         db.commit()
@@ -3526,6 +3673,7 @@ def chatbot_message():
             "pdf_url": data.get("pdf_url"),
         })
 
+    assistant_message = chatbot_reply(data, phase, assistant_message)
     chatbot_add_message(db, session_token, "assistant", assistant_message)
     chatbot_update(db, session_token, data, phase)
     db.commit()

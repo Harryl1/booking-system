@@ -115,6 +115,28 @@
                 <div class="panel">
                     <h3>Chatbot Conversation</h3>
                     <p class="muted">{{ chatbot_conversations[0]["ai_summary"] or "No summary available yet." }}</p>
+                    <div class="grid" style="margin-bottom:14px;">
+                        <div class="list-item"><strong>Motivation</strong><div>{{ chatbot_data.get("motivation") or "-" }}</div></div>
+                        <div class="list-item"><strong>Category</strong><div>{{ (chatbot_data.get("motivation_category") or "-")|replace("_", " ")|title }}</div></div>
+                        <div class="list-item"><strong>Plan</strong><div>{{ (chatbot_data.get("plan") or "-")|replace("_", " ")|title }}</div></div>
+                        <div class="list-item"><strong>Timeline</strong><div>{{ chatbot_data.get("selling_timeframe") or "-" }}</div></div>
+                        <div class="list-item"><strong>Condition</strong><div>{{ chatbot_data.get("condition") or "-" }}</div></div>
+                        <div class="list-item"><strong>Preferred contact</strong><div>{{ (chatbot_data.get("preferred_contact") or "-")|title }}</div></div>
+                    </div>
+                    {% if chatbot_data.get("objections_raised") %}
+                    <div class="list-item" style="margin-bottom:14px;">
+                        <strong>Objections or pushback</strong>
+                        {% for objection in chatbot_data.get("objections_raised") %}
+                        <div>{{ objection }}</div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    {% if chatbot_data.get("sensitive_context") %}
+                    <div class="list-item" style="margin-bottom:14px;">
+                        <strong>Sensitive context flagged</strong>
+                        <div>Handle follow-up with extra care.</div>
+                    </div>
+                    {% endif %}
                     <div class="timeline">
                         {% for message in chatbot_messages %}
                         <div class="list-item">
