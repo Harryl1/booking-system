@@ -4,12 +4,10 @@ import uuid
 import secrets
 import csv
 import io
-import smtplib
 import re
 import json
 from functools import wraps
 from datetime import datetime, timedelta
-from email.message import EmailMessage
 from urllib.parse import urlparse
 from flask import (
     Flask,
@@ -24,11 +22,26 @@ from flask import (
     make_response,
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
-from werkzeug.security import generate_password_hash, check_password_hash
 
+from blueprints.auth import create_auth_blueprint
 from blueprints.public_api import create_public_api_blueprint
-from pdf_report import generate_pdf_report
 from property_tool import to_float
+from services.email import (
+    notify_new_lead as service_notify_new_lead,
+    send_customer_confirmation as service_send_customer_confirmation,
+    send_email as service_send_email,
+)
+from services.pdf import create_lead_report as service_create_lead_report
+from services.scoring import (
+    best_next_action,
+    calculate_lead_score,
+    calculate_referral_score,
+    contact_priority_label,
+    lead_score_factors,
+    normalise_requested_services,
+    normalise_service_type,
+    referral_score_factors,
+)
 
 try:
     import psycopg
@@ -1027,167 +1040,6 @@ def create_follow_up_task(lead_id, title, due_at=None, user_id=None):
     )
 
 
-def calculate_lead_score(data, marketing_consent=False):
-    score = 10
-    if marketing_consent:
-        score += 10
-    if data.get("phone"):
-        score += 10
-    requested_services = normalise_requested_services(data.get("help_requested") or data.get("selected_services"))
-    if SERVICE_VALUATION in requested_services:
-        score += 20
-    if to_float(data.get("net_proceeds", 0)) > 50000:
-        score += 15
-    if to_float(data.get("max_budget", 0)) > 300000:
-        score += 10
-    if data.get("plan") == "buy":
-        score += 10
-    selling_timeframe = (data.get("selling_timeframe") or "").strip().lower()
-    timeframe_scores = {
-        "0-3 months": 30,
-        "3-6 months": 20,
-        "6-9 months": 10,
-        "9-12 months": 5,
-        "just exploring": 0,
-    }
-    score += timeframe_scores.get(selling_timeframe, 0)
-    return min(score, 100)
-
-
-def calculate_referral_score(
-    data,
-    marketing_consent=False,
-    referral_consent=False,
-    referral_fee_disclosure=False,
-):
-    score = 0
-    requested_services = normalise_requested_services(data.get("help_requested") or data.get("selected_services"))
-    service_scores = {
-        SERVICE_MORTGAGE: 30,
-        SERVICE_SOLICITOR: 25,
-        SERVICE_EPC: 15,
-        SERVICE_VALUATION: 10,
-    }
-    for service in requested_services:
-        score += service_scores.get(service, 0)
-    if referral_consent:
-        score += 15
-    if referral_fee_disclosure:
-        score += 10
-    if marketing_consent:
-        score += 5
-    if to_float(data.get("net_proceeds", 0)) > 50000:
-        score += 10
-    if to_float(data.get("max_budget", 0)) > 300000:
-        score += 10
-    if data.get("plan") == "buy":
-        score += 10
-    selling_timeframe = (data.get("selling_timeframe") or "").strip().lower()
-    timeframe_scores = {
-        "0-3 months": 15,
-        "3-6 months": 10,
-        "6-9 months": 5,
-        "9-12 months": 3,
-        "just exploring": 0,
-    }
-    score += timeframe_scores.get(selling_timeframe, 0)
-    return min(score, 100)
-
-
-def lead_score_factors(lead, referrals=None):
-    referrals = referrals or []
-    factors = []
-    if lead["marketing_consent"]:
-        factors.append("Marketing consent captured")
-    if lead["phone"]:
-        factors.append("Phone number supplied")
-    if any(referral["service_type"] == SERVICE_VALUATION for referral in referrals):
-        factors.append("Local valuation requested")
-    if lead["selling_timeframe"]:
-        factors.append(f"Selling timeframe: {lead['selling_timeframe']}")
-    if to_float(lead["valuation"], 0) >= 250000:
-        factors.append("Material property value")
-    if (lead["lead_score"] or 0) >= 60:
-        factors.append("High-priority lead score")
-    if not factors:
-        factors.append("Basic contact details captured")
-    return factors
-
-
-def referral_score_factors(lead, referrals=None):
-    referrals = referrals or []
-    factors = []
-    service_names = [
-        SERVICE_LABELS.get(referral["service_type"], referral["service_type"])
-        for referral in referrals
-    ]
-    if service_names:
-        factors.append("Requested services: " + ", ".join(service_names))
-    if lead["referral_consent_accepted_at"]:
-        factors.append("Referral sharing consent captured")
-    if lead["referral_fee_disclosure_accepted_at"]:
-        factors.append("Referral fee disclosure accepted")
-    if any(referral["service_type"] == SERVICE_MORTGAGE for referral in referrals):
-        factors.append("Mortgage referral opportunity")
-    if any(referral["service_type"] == SERVICE_SOLICITOR for referral in referrals):
-        factors.append("Conveyancing or solicitor referral opportunity")
-    if any(referral["service_type"] == SERVICE_EPC for referral in referrals):
-        factors.append("EPC referral opportunity")
-    if lead["selling_timeframe"] in {"0-3 months", "3-6 months"}:
-        factors.append(f"Near-term moving timeframe: {lead['selling_timeframe']}")
-    if not factors:
-        factors.append("No referral opportunity captured yet")
-    return factors
-
-
-def best_next_action(lead, tasks=None, referrals=None):
-    tasks = tasks or []
-    referrals = referrals or []
-    open_tasks = [task for task in tasks if not task["completed_at"]]
-    if open_tasks:
-        return f"Complete task: {open_tasks[0]['title']}"
-    if lead["status"] == LEAD_STATUS_NEW and lead["selling_timeframe"] == "0-3 months":
-        return "Call immediately: seller says they may move within 0-3 months"
-    if lead["status"] == LEAD_STATUS_NEW:
-        return "Call the lead and qualify their moving timeline"
-    if lead["status"] == LEAD_STATUS_CONTACTED:
-        return "Book a valuation appointment or mark the next follow-up"
-    if lead["status"] in {LEAD_STATUS_VALUATION_BOOKED, LEAD_STATUS_APPOINTMENT_BOOKED}:
-        return "Prepare valuation notes and confirm referral opportunities"
-    if referrals:
-        return "Review open service referrals and update fee status"
-    if lead["status"] == LEAD_STATUS_WON:
-        return "Record revenue and keep referral follow-up current"
-    if lead["status"] == LEAD_STATUS_LOST:
-        return "Add loss reason and close remaining tasks"
-    return "Add a note with the latest outcome"
-
-
-def contact_priority_label(lead):
-    score = lead["lead_score"] or 0
-    if score >= 70:
-        return "Hot"
-    if score >= 45:
-        return "Warm"
-    return "New"
-
-
-def normalise_service_type(service):
-    service_key = (service or "").strip().lower()
-    return SERVICE_ALIASES.get(service_key)
-
-
-def normalise_requested_services(services):
-    cleaned = []
-    if isinstance(services, str):
-        services = [services]
-    for service in services or []:
-        service_type = normalise_service_type(service)
-        if service_type and service_type not in cleaned:
-            cleaned.append(service_type)
-    return cleaned
-
-
 def create_service_referrals(lead_id, services):
     db = get_db()
     created = []
@@ -1226,59 +1078,44 @@ def get_referrals_for_leads(db, lead_ids):
     return referrals_by_lead
 
 
+def email_config():
+    return {
+        "smtp_host": SMTP_HOST,
+        "smtp_port": SMTP_PORT,
+        "customer_email_from": CUSTOMER_EMAIL_FROM,
+        "smtp_username": SMTP_USERNAME,
+        "smtp_password": SMTP_PASSWORD,
+        "smtp_use_tls": SMTP_USE_TLS,
+    }
+
+
 def send_email(to_address, subject, body):
-    if not SMTP_HOST or not CUSTOMER_EMAIL_FROM or not to_address:
-        return False
-
-    message = EmailMessage()
-    message["From"] = CUSTOMER_EMAIL_FROM
-    message["To"] = to_address
-    message["Subject"] = subject
-    message.set_content(body)
-
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as smtp:
-        if SMTP_USE_TLS:
-            smtp.starttls()
-        if SMTP_USERNAME and SMTP_PASSWORD:
-            smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
-        smtp.send_message(message)
-    return True
+    return service_send_email(to_address, subject, body, **email_config())
 
 
 def notify_new_lead(lead_id, name, email, phone, address, lead_score, selling_timeframe=""):
-    if not LEAD_NOTIFICATION_EMAIL:
-        return
-    body = (
-        f"New property tool lead #{lead_id}\n\n"
-        f"Name: {name}\n"
-        f"Email: {email}\n"
-        f"Phone: {phone}\n"
-        f"Address: {address}\n"
-        f"Selling timeframe: {selling_timeframe or 'Not supplied'}\n"
-        f"Lead score: {lead_score}/100\n\n"
-        f"Recommended action: call and qualify the seller while the enquiry is fresh.\n\n"
-        f"Open lead: {APP_BASE_URL}/leads/{lead_id}\n"
-        f"Open leads: {APP_BASE_URL}/leads"
+    return service_notify_new_lead(
+        lead_id,
+        name,
+        email,
+        phone,
+        address,
+        lead_score,
+        selling_timeframe,
+        notification_email=LEAD_NOTIFICATION_EMAIL,
+        app_base_url=APP_BASE_URL,
+        email_config=email_config(),
+        logger=app.logger,
     )
-    try:
-        send_email(LEAD_NOTIFICATION_EMAIL, f"New property lead: {name}", body)
-    except Exception:
-        app.logger.exception("Failed to send new lead notification")
 
 
 def send_customer_confirmation(email, report_url):
-    if not email or not report_url:
-        return
-    body = (
-        "Thanks for using the Equiome property tool.\n\n"
-        f"Your personalised report is ready here:\n{report_url}\n\n"
-        "A local property expert can help confirm your valuation range and next steps.\n\n"
-        "This report is an indicative estimate only and is not financial, mortgage, or legal advice."
+    return service_send_customer_confirmation(
+        email,
+        report_url,
+        email_config=email_config(),
+        logger=app.logger,
     )
-    try:
-        send_email(email, "Your Equiome property report", body)
-    except Exception:
-        app.logger.exception("Failed to send customer confirmation")
 
 
 def agent_lead_clause(alias="leads"):
@@ -1611,123 +1448,29 @@ def get_booking_for_assessor(db, booking_id, assessor_id):
     ).fetchone()
 
 
-# -----------------------
-# Auth Routes
-# -----------------------
-@app.route("/register", methods=["GET", "POST"])
-def register():
-    db = get_db()
-    platform_admin_count = db.execute(
-        "SELECT COUNT(*) FROM users WHERE role = ?",
-        (ROLE_PLATFORM_ADMIN,)
-    ).fetchone()[0]
-    setup_mode = platform_admin_count == 0
 
-    if setup_mode:
-        if not ADMIN_SETUP_TOKEN:
-            abort(503, "Admin setup token is not configured")
-        supplied_setup_token = request.values.get("setup_token", "").strip()
-        if not secrets.compare_digest(supplied_setup_token, ADMIN_SETUP_TOKEN):
-            abort(403, "Admin setup token is required")
-    else:
-        if "user_id" not in session:
-            abort(403, "User registration is restricted")
-        if session.get("role") != ROLE_PLATFORM_ADMIN:
-            abort(403, "Only Equiome admins can create users")
-
-    if request.method == "POST":
-        validate_csrf()
-
-        username = validate_required_text(
-            request.form.get("username"),
-            "username",
-            max_length=100
-        )
-        password = request.form.get("password", "")
-        role = ROLE_PLATFORM_ADMIN if setup_mode else validate_role(request.form.get("role"))
-
-        if len(password) < 12:
-            abort(400, "Password must be at least 12 characters")
-        if role == ROLE_PLATFORM_ADMIN:
-            validate_admin_username(username)
-
-        hashed_password = generate_password_hash(password)
-        organisation_id = session.get("organisation_id") or default_organisation_id(db)
-
-        try:
-            db.execute(
-                "INSERT INTO users (username, password, role, organisation_id) VALUES (?, ?, ?, ?)",
-                (username, hashed_password, role, organisation_id)
-            )
-            db.commit()
-        except Exception as error:
-            db.rollback()
-            if not is_integrity_error(error):
-                raise
-            return "User already exists", 400
-
-        return redirect("/login")
-
-    return render_template(
-        "register.html",
-        csrf_token=get_csrf_token(),
-        setup_mode=setup_mode,
-        setup_token=request.values.get("setup_token", ""),
-        allow_platform_admin=session.get("role") == ROLE_PLATFORM_ADMIN,
-    )
+def register_auth_blueprint():
+    app.register_blueprint(create_auth_blueprint({
+        "get_db": get_db,
+        "login_required": login_required,
+        "apply_rate_limit": apply_rate_limit,
+        "client_ip": client_ip,
+        "validate_csrf": validate_csrf,
+        "validate_required_text": validate_required_text,
+        "validate_role": validate_role,
+        "validate_admin_username": validate_admin_username,
+        "default_organisation_id": default_organisation_id,
+        "is_integrity_error": is_integrity_error,
+        "get_csrf_token": get_csrf_token,
+        "role_platform_admin": ROLE_PLATFORM_ADMIN,
+        "role_assessor": ROLE_ASSESSOR,
+        "admin_setup_token": ADMIN_SETUP_TOKEN,
+        "lead_retention_days": LEAD_RETENTION_DAYS,
+        "report_retention_days": REPORT_RETENTION_DAYS,
+    }))
 
 
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        apply_rate_limit(f"{client_ip()}:login")
-        validate_csrf()
-
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "")
-
-        db = get_db()
-        user = db.execute(
-            "SELECT * FROM users WHERE username = ?",
-            (username,)
-        ).fetchone()
-
-        if user and check_password_hash(user["password"], password):
-            session.permanent = True
-            session["user_id"] = user["id"]
-            session["username"] = user["username"]
-            session["role"] = user["role"]
-            session["organisation_id"] = user["organisation_id"]
-            get_csrf_token()
-            return redirect("/")
-
-        return "Invalid login", 401
-
-    return render_template(
-        "login.html",
-        csrf_token=get_csrf_token()
-    )
-
-
-@app.route("/logout")
-@login_required
-def logout():
-    session.clear()
-    return redirect("/login")
-
-
-@app.get("/privacy")
-def privacy_notice():
-    return render_template(
-        "privacy.html",
-        retention_days=LEAD_RETENTION_DAYS,
-        report_retention_days=REPORT_RETENTION_DAYS,
-    )
-
-
-@app.get("/agent-terms")
-def agent_terms():
-    return render_template("agent_terms.html")
+register_auth_blueprint()
 
 
 # -----------------------
@@ -3367,37 +3110,7 @@ def get_private_report(report_token):
 
 
 def create_lead_report(data):
-    report_token = secrets.token_urlsafe(32)
-    filename = f"report_{uuid.uuid4().hex}.pdf"
-    filepath = os.path.join(REPORTS_DIR, filename)
-
-    selected_services = data.get("help_requested") or data.get("selected_services") or []
-    if isinstance(selected_services, str):
-        selected_services = [selected_services.strip()] if selected_services.strip() else []
-
-    pdf_data = {
-        "name": data.get("name") or data.get("full_name"),
-        "email": data.get("email"),
-        "address": data.get("address"),
-        "valuation_low": to_float(data.get("valuation_low", 0)),
-        "valuation_high": to_float(data.get("valuation_high", data.get("valuation", 0))),
-        "moving_costs": to_float(data.get("moving_costs", 0)),
-        "net_proceeds": to_float(data.get("net_proceeds", 0)),
-        "borrowing_power": to_float(data.get("borrowing_power", 0)),
-        "max_budget": to_float(data.get("max_budget", 0)),
-        "monthly_payment_estimate": to_float(data.get("monthly_payment_estimate", 0)),
-        "selling_timeframe": data.get("selling_timeframe") or "Not supplied",
-        "recommendation": data.get("recommendation") or "No recommendation available.",
-        "selected_services": selected_services,
-    }
-
-    logo_path = os.path.join(STATIC_DIR, "logo.png")
-    if not os.path.exists(logo_path):
-        logo_path = None
-
-    generate_pdf_report(pdf_data, filepath, logo_path=logo_path)
-    report_expires_at = (datetime.now() + timedelta(days=REPORT_RETENTION_DAYS)).isoformat()
-    return filename, report_token, report_expires_at
+    return service_create_lead_report(data, REPORTS_DIR, STATIC_DIR, REPORT_RETENTION_DAYS)
 
 
 def save_lead_payload(data, create_report=False):
