@@ -10,6 +10,25 @@ DEFAULT_MISC = 500
 DEFAULT_AFFORDABILITY_MULTIPLE = 4.5
 
 
+def normalise_customer_intent(value):
+    intent = (value or "").strip().lower()
+    intent = intent.replace("-", "_").replace(" ", "_")
+    aliases = {
+        "first_time_buyer": "first_time_buyer",
+        "first_time": "first_time_buyer",
+        "ftb": "first_time_buyer",
+        "buyer": "first_time_buyer",
+        "homeowner_moving": "homeowner_moving",
+        "homeowner": "homeowner_moving",
+        "moving_home": "homeowner_moving",
+        "remortgage": "remortgage",
+        "remortgaging": "remortgage",
+        "exploring": "exploring",
+        "just_exploring": "exploring",
+    }
+    return aliases.get(intent, intent)
+
+
 def to_float(value, default=0.0):
     try:
         if value is None or value == "":
@@ -57,7 +76,13 @@ def get_result_type(plan: str, net_proceeds: float, max_budget: float, target_pr
     return "needs_review"
 
 
-def recommendation_text(result_type: str) -> str:
+def recommendation_text(result_type: str, customer_intent: str = "") -> str:
+    customer_intent = normalise_customer_intent(customer_intent)
+    if customer_intent == "first_time_buyer":
+        return "You can use this as a first affordability guide before speaking to a mortgage adviser about your deposit, income and lender options."
+    if customer_intent == "remortgage":
+        return "Your next step is to review your current mortgage balance, rate and deal end date with a mortgage adviser."
+
     mapping = {
         "negative_equity_risk": "Selling may be difficult unless your mortgage balance or costs are lower than estimated.",
         "renting_next": "You may be able to release funds from your sale, but your next-step affordability depends on your expected rent and timing.",
@@ -129,46 +154,71 @@ def get_real_valuation(address: str, property_type=None) -> dict:
 
 def calculate_property_decision(data: dict) -> dict:
     valuation = data.get("valuation") or {}
+    customer_intent = normalise_customer_intent(data.get("customer_intent"))
     mortgage = to_float(data.get("mortgage", 0))
     early_repayment_charge = to_float(data.get("early_repayment_charge", 0))
     extra_costs_override = to_float(data.get("extra_costs_override", 0))
     plan = (data.get("plan") or "").strip().lower()
     target_price = to_float(data.get("target_price", 0))
+    deposit = to_float(data.get("deposit", 0))
     income = to_float(data.get("income", 0))
     partner_income = to_float(data.get("partner_income", 0))
     current_monthly_payment = to_float(data.get("current_monthly_payment", 0))
+    current_rate = (data.get("current_rate") or "").strip()
+    deal_expiry = (data.get("deal_expiry") or "").strip()
 
     estimated_value = to_float(valuation.get("estimated_value", 0))
     low = to_float(valuation.get("low", 0))
     high = to_float(valuation.get("high", 0))
     confidence = valuation.get("confidence", "Medium")
 
-    if estimated_value <= 0:
+    if not customer_intent and estimated_value <= 0 and (deposit > 0 or income > 0 or partner_income > 0):
+        customer_intent = "first_time_buyer"
+
+    is_first_time_buyer = customer_intent == "first_time_buyer"
+    is_remortgage = customer_intent == "remortgage"
+
+    if estimated_value <= 0 and not is_first_time_buyer:
         raise ValueError("Valid valuation data is required.")
 
-    moving_costs = estimate_moving_costs(estimated_value, extra_costs_override)
+    if is_first_time_buyer:
+        moving_costs = {
+            "agent_fee": 0,
+            "conveyancing": 0,
+            "removals": 0,
+            "misc": 0,
+            "extra_override": 0,
+            "total": 0,
+        }
+    else:
+        moving_costs = estimate_moving_costs(estimated_value, extra_costs_override)
     total_costs = moving_costs["total"] + early_repayment_charge
-    net_proceeds = estimated_value - mortgage - total_costs
+    net_proceeds = 0 if is_first_time_buyer else estimated_value - mortgage - total_costs
 
     total_income = income + partner_income
     borrowing_power = 0 if plan == "rent" else total_income * DEFAULT_AFFORDABILITY_MULTIPLE
-    max_budget = max(net_proceeds, 0) + borrowing_power
+    max_budget = max(net_proceeds, 0) + borrowing_power + (deposit if is_first_time_buyer else 0)
 
     monthly_payment_estimate = None
     if plan != "rent" and borrowing_power > 0:
-        loan_needed = max(max_budget - max(net_proceeds, 0), 0)
+        loan_needed = max(max_budget - max(net_proceeds, 0) - (deposit if is_first_time_buyer else 0), 0)
         monthly_payment_estimate = round(loan_needed * 0.006)
 
     monthly_payment_change = None
     if monthly_payment_estimate is not None and current_monthly_payment > 0:
         monthly_payment_change = round(monthly_payment_estimate - current_monthly_payment)
 
-    result_type = get_result_type(
-        plan=plan,
-        net_proceeds=net_proceeds,
-        max_budget=max_budget,
-        target_price=target_price,
-    )
+    if is_first_time_buyer:
+        result_type = "first_time_buyer_affordability"
+    elif is_remortgage:
+        result_type = "remortgage_review"
+    else:
+        result_type = get_result_type(
+            plan=plan,
+            net_proceeds=net_proceeds,
+            max_budget=max_budget,
+            target_price=target_price,
+        )
 
     return {
         "valuation": {
@@ -177,10 +227,12 @@ def calculate_property_decision(data: dict) -> dict:
             "high": round(high),
             "confidence": confidence,
         },
+        "customer_intent": customer_intent,
         "plan": plan,
         "moving_costs": moving_costs,
         "early_repayment_charge": round(early_repayment_charge),
         "net_proceeds": round(net_proceeds),
+        "deposit": round(deposit),
         "income": round(income),
         "partner_income": round(partner_income),
         "total_income": round(total_income),
@@ -189,6 +241,8 @@ def calculate_property_decision(data: dict) -> dict:
         "max_budget": round(max_budget),
         "monthly_payment_estimate": monthly_payment_estimate,
         "monthly_payment_change": monthly_payment_change,
+        "current_rate": current_rate,
+        "deal_expiry": deal_expiry,
         "result_type": result_type,
-        "recommendation": recommendation_text(result_type),
+        "recommendation": recommendation_text(result_type, customer_intent),
     }

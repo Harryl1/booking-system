@@ -25,7 +25,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from blueprints.auth import create_auth_blueprint
 from blueprints.public_api import create_public_api_blueprint
-from property_tool import to_float
+from property_tool import normalise_customer_intent, to_float
 from services.email import (
     notify_new_lead as service_notify_new_lead,
     send_customer_confirmation as service_send_customer_confirmation,
@@ -411,6 +411,12 @@ def init_db():
                 utm_medium TEXT,
                 utm_campaign TEXT,
                 selling_timeframe TEXT,
+                customer_intent TEXT,
+                deposit INTEGER NOT NULL DEFAULT 0,
+                target_area TEXT,
+                mortgage_remaining INTEGER NOT NULL DEFAULT 0,
+                current_rate TEXT,
+                deal_expiry TEXT,
                 lead_score INTEGER NOT NULL DEFAULT 0,
                 referral_score INTEGER NOT NULL DEFAULT 0,
                 next_follow_up_at TEXT,
@@ -571,6 +577,12 @@ def init_db():
             utm_medium TEXT,
             utm_campaign TEXT,
             selling_timeframe TEXT,
+            customer_intent TEXT,
+            deposit INTEGER NOT NULL DEFAULT 0,
+            target_area TEXT,
+            mortgage_remaining INTEGER NOT NULL DEFAULT 0,
+            current_rate TEXT,
+            deal_expiry TEXT,
             lead_score INTEGER NOT NULL DEFAULT 0,
             referral_score INTEGER NOT NULL DEFAULT 0,
             next_follow_up_at TEXT,
@@ -700,6 +712,12 @@ def ensure_lead_action_columns():
         "utm_medium": "TEXT",
         "utm_campaign": "TEXT",
         "selling_timeframe": "TEXT",
+        "customer_intent": "TEXT",
+        "deposit": "INTEGER NOT NULL DEFAULT 0",
+        "target_area": "TEXT",
+        "mortgage_remaining": "INTEGER NOT NULL DEFAULT 0",
+        "current_rate": "TEXT",
+        "deal_expiry": "TEXT",
         "lead_score": "INTEGER NOT NULL DEFAULT 0",
         "referral_score": "INTEGER NOT NULL DEFAULT 0",
         "next_follow_up_at": "TEXT",
@@ -2280,7 +2298,8 @@ def export_leads_csv():
     where_sql, params = scoped_lead_where()
     rows = db.execute(f"""
         SELECT id, name, email, phone, address, valuation, source, utm_source,
-               utm_medium, utm_campaign, selling_timeframe, status, lead_stage, lead_score, referral_score,
+               utm_medium, utm_campaign, selling_timeframe, customer_intent, deposit, target_area,
+               mortgage_remaining, current_rate, deal_expiry, status, lead_stage, lead_score, referral_score,
                marketing_consent, referral_consent_accepted_at, referral_fee_disclosure_accepted_at,
                created_at, next_follow_up_at, retention_until,
                (
@@ -2298,7 +2317,8 @@ def export_leads_csv():
     writer = csv.writer(output)
     writer.writerow([
         "id", "name", "email", "phone", "address", "valuation", "source",
-        "utm_source", "utm_medium", "utm_campaign", "selling_timeframe", "status", "lead_stage",
+        "utm_source", "utm_medium", "utm_campaign", "selling_timeframe", "customer_intent",
+        "deposit", "target_area", "mortgage_remaining", "current_rate", "deal_expiry", "status", "lead_stage",
         "lead_score", "referral_score", "marketing_consent", "referral_consent_accepted_at",
         "referral_fee_disclosure_accepted_at", "created_at", "next_follow_up_at",
         "retention_until", "referrals",
@@ -3125,6 +3145,12 @@ def save_lead_payload(data, create_report=False):
     utm_medium = (data.get("utm_medium") or "").strip()
     utm_campaign = (data.get("utm_campaign") or "").strip()
     selling_timeframe = validate_selling_timeframe(data.get("selling_timeframe"))
+    customer_intent = normalise_customer_intent(data.get("customer_intent"))
+    deposit = int(to_float(data.get("deposit"), 0))
+    target_area = (data.get("target_area") or "").strip()
+    mortgage_remaining = int(to_float(data.get("mortgage_remaining", data.get("mortgage")), 0))
+    current_rate = (data.get("current_rate") or "").strip()
+    deal_expiry = (data.get("deal_expiry") or "").strip()
     created_at = data.get("created_at") or datetime.now().isoformat()
     notes = (data.get("notes") or "").strip()
     requested_services = normalise_requested_services(data.get("help_requested") or data.get("selected_services"))
@@ -3195,9 +3221,11 @@ def save_lead_payload(data, create_report=False):
                 assigned_agent_id, report_filename, report_token, report_expires_at,
                 marketing_consent, privacy_notice_accepted_at,
                 referral_consent_accepted_at, referral_fee_disclosure_accepted_at, retention_until,
-                source_page, utm_source, utm_medium, utm_campaign, selling_timeframe, lead_score, referral_score, next_follow_up_at,
+                source_page, utm_source, utm_medium, utm_campaign, selling_timeframe,
+                customer_intent, deposit, target_area, mortgage_remaining, current_rate, deal_expiry,
+                lead_score, referral_score, next_follow_up_at,
                 organisation_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             name,
             email,
@@ -3225,6 +3253,12 @@ def save_lead_payload(data, create_report=False):
             utm_medium,
             utm_campaign,
             selling_timeframe,
+            customer_intent,
+            deposit,
+            target_area,
+            mortgage_remaining,
+            current_rate,
+            deal_expiry,
             lead_score,
             referral_score,
             (datetime.now() + timedelta(days=1)).isoformat(),
@@ -3232,7 +3266,23 @@ def save_lead_payload(data, create_report=False):
         ))
 
         lead_id = cursor.lastrowid
-        add_lead_note(lead_id, "Lead captured from property decision tool.", user_id=assigned_agent_id)
+        source_note = "Lead captured from broker property tool." if source == "broker_property_tool" else "Lead captured from property decision tool."
+        add_lead_note(lead_id, source_note, user_id=assigned_agent_id)
+        broker_context = []
+        if customer_intent:
+            broker_context.append(f"Intent: {customer_intent.replace('_', ' ').title()}")
+        if target_area:
+            broker_context.append(f"Target area: {target_area}")
+        if deposit:
+            broker_context.append(f"Deposit: £{deposit:,}")
+        if mortgage_remaining:
+            broker_context.append(f"Mortgage remaining: £{mortgage_remaining:,}")
+        if current_rate:
+            broker_context.append(f"Current rate: {current_rate}")
+        if deal_expiry:
+            broker_context.append(f"Deal expiry: {deal_expiry}")
+        if broker_context:
+            add_lead_note(lead_id, "Broker context: " + "; ".join(broker_context), user_id=assigned_agent_id)
         if notes:
             add_lead_note(lead_id, notes, user_id=assigned_agent_id)
         create_follow_up_task(

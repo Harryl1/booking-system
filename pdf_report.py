@@ -258,14 +258,28 @@ def metric_card(label, value, styles, width, highlight=False):
 
 
 def summary_box(report_data, styles, content_width):
+    customer_intent = safe_text(report_data.get("customer_intent"), "").lower()
     headline = f"You could buy up to {format_currency(report_data.get('max_budget'))}"
 
-    body_text = (
-        f"Based on your current position, your estimated available equity is "
-        f"<b>{format_currency(report_data.get('net_proceeds'))}</b> and your indicative "
-        f"borrowing power is <b>{format_currency(report_data.get('borrowing_power'))}</b>. "
-        f"This uses standard affordability assumptions and estimated selling costs."
-    )
+    if customer_intent == "first_time_buyer":
+        body_text = (
+            f"Based on the deposit and income figures supplied, your indicative borrowing "
+            f"power is <b>{format_currency(report_data.get('borrowing_power'))}</b>. "
+            f"This is an early guide only and should be checked with a mortgage adviser."
+        )
+    elif customer_intent == "remortgage":
+        headline = "Your mortgage review is ready"
+        body_text = (
+            "This report summarises the information supplied so a mortgage adviser can "
+            "review your current deal, balance and next-step options."
+        )
+    else:
+        body_text = (
+            f"Based on your current position, your estimated available equity is "
+            f"<b>{format_currency(report_data.get('net_proceeds'))}</b> and your indicative "
+            f"borrowing power is <b>{format_currency(report_data.get('borrowing_power'))}</b>. "
+            f"This uses standard affordability assumptions and estimated selling costs."
+        )
 
     table = Table(
         [[Paragraph("AT A GLANCE", styles["SummaryKicker"])],
@@ -389,12 +403,19 @@ def generate_pdf_report(report_data, filepath, logo_path=None):
         except Exception:
             pass
 
-    header_left.append(Paragraph("Your Property Report", styles["ReportTitle"]))
+    customer_intent = safe_text(report_data.get("customer_intent"), "").lower()
+    report_title = "Your Property Report"
+    report_subtitle = "A personalised view of your equity and next-property budget."
+    if customer_intent == "first_time_buyer":
+        report_title = "Your First Home Report"
+        report_subtitle = "An early affordability guide based on your deposit and income."
+    elif customer_intent == "remortgage":
+        report_title = "Your Mortgage Review Summary"
+        report_subtitle = "A simple summary for reviewing your current mortgage position."
+
+    header_left.append(Paragraph(report_title, styles["ReportTitle"]))
     header_left.append(Spacer(1, 2))
-    header_left.append(Paragraph(
-        "A personalised view of your equity and next-property budget.",
-        styles["ReportSubtitle"]
-    ))
+    header_left.append(Paragraph(report_subtitle, styles["ReportSubtitle"]))
 
     prepared_for = (
         f"<b>Prepared for</b><br/>"
@@ -438,27 +459,35 @@ def generate_pdf_report(report_data, filepath, logo_path=None):
     story.append(summary_box(report_data, styles, content_width))
     story.append(Spacer(1, 16))
 
-    story.append(Paragraph("Estimated financial position", styles["SectionHeading"]))
+    metric_heading = "Estimated financial position"
+    if customer_intent == "first_time_buyer":
+        metric_heading = "Estimated buying position"
+    elif customer_intent == "remortgage":
+        metric_heading = "Mortgage review position"
+    story.append(Paragraph(metric_heading, styles["SectionHeading"]))
 
     card_gap = 8
     col_width = (content_width - card_gap) / 2
 
+    if customer_intent == "first_time_buyer":
+        first_metric_label = "Deposit"
+        first_metric_value = format_currency(report_data.get("deposit"))
+        second_metric_label = "Target area"
+        second_metric_value = safe_text(report_data.get("target_area"), "Not supplied")
+    elif customer_intent == "remortgage":
+        first_metric_label = "Estimated property value"
+        first_metric_value = format_currency_range(report_data.get("valuation_low"), report_data.get("valuation_high"))
+        second_metric_label = "Mortgage remaining"
+        second_metric_value = format_currency(report_data.get("mortgage_remaining"))
+    else:
+        first_metric_label = "Estimated property value"
+        first_metric_value = format_currency_range(report_data.get("valuation_low"), report_data.get("valuation_high"))
+        second_metric_label = "Estimated sale and moving costs"
+        second_metric_value = format_currency(report_data.get("moving_costs"))
+
     row_1 = Table([[
-        metric_card(
-            "Estimated property value",
-            format_currency_range(
-                report_data.get("valuation_low"),
-                report_data.get("valuation_high")
-            ),
-            styles,
-            col_width
-        ),
-        metric_card(
-            "Estimated sale and moving costs",
-            format_currency(report_data.get("moving_costs")),
-            styles,
-            col_width
-        )
+        metric_card(first_metric_label, first_metric_value, styles, col_width),
+        metric_card(second_metric_label, second_metric_value, styles, col_width)
     ]], colWidths=[col_width, col_width])
 
     row_1.setStyle(TableStyle([
@@ -537,16 +566,28 @@ def generate_pdf_report(report_data, filepath, logo_path=None):
     story.append(boxed_section("Cost and affordability snapshot", cost_items, styles, content_width))
     story.append(Spacer(1, 16))
 
+    intent_labels = {
+        "first_time_buyer": "First-time buyer",
+        "homeowner_moving": "Homeowner moving",
+        "remortgage": "Remortgage",
+        "exploring": "Exploring",
+    }
     assumptions_items = [
         detail_row("Client name", safe_text(report_data.get("name")), styles, content_width),
         detail_row("Email", safe_text(report_data.get("email")), styles, content_width),
+        detail_row("Intent", intent_labels.get(customer_intent, safe_text(report_data.get("customer_intent"), "Not supplied")), styles, content_width),
         detail_row("Address", safe_text(report_data.get("address")), styles, content_width),
-        detail_row(
+    ]
+
+    if customer_intent != "first_time_buyer":
+        assumptions_items.append(detail_row(
             "Valuation range",
             format_currency_range(report_data.get("valuation_low"), report_data.get("valuation_high")),
             styles,
             content_width
-        ),
+        ))
+
+    assumptions_items.extend([
         detail_row(
             "Available equity",
             format_currency(report_data.get("net_proceeds")),
@@ -565,7 +606,18 @@ def generate_pdf_report(report_data, filepath, logo_path=None):
             styles,
             content_width
         ),
-    ]
+    ])
+
+    if report_data.get("target_area"):
+        assumptions_items.append(detail_row("Target area", safe_text(report_data.get("target_area")), styles, content_width))
+    if float(report_data.get("deposit") or 0) > 0:
+        assumptions_items.append(detail_row("Deposit", format_currency(report_data.get("deposit")), styles, content_width))
+    if float(report_data.get("mortgage_remaining") or 0) > 0:
+        assumptions_items.append(detail_row("Mortgage remaining", format_currency(report_data.get("mortgage_remaining")), styles, content_width))
+    if report_data.get("current_rate"):
+        assumptions_items.append(detail_row("Current rate", safe_text(report_data.get("current_rate")), styles, content_width))
+    if report_data.get("deal_expiry"):
+        assumptions_items.append(detail_row("Deal expiry", safe_text(report_data.get("deal_expiry")), styles, content_width))
 
     assumptions_box = boxed_section(
         "Report summary",

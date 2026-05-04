@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from pdf_report import generate_pdf_report
-from property_tool import to_float
+from property_tool import normalise_customer_intent, to_float
 
 
 def create_lead_report(data, reports_dir, static_dir, report_retention_days):
@@ -28,6 +28,12 @@ def create_lead_report(data, reports_dir, static_dir, report_retention_days):
         "max_budget": to_float(data.get("max_budget", 0)),
         "monthly_payment_estimate": to_float(data.get("monthly_payment_estimate", 0)),
         "selling_timeframe": data.get("selling_timeframe") or "Not supplied",
+        "customer_intent": normalise_customer_intent(data.get("customer_intent")),
+        "deposit": to_float(data.get("deposit", 0)),
+        "target_area": data.get("target_area") or "",
+        "mortgage_remaining": to_float(data.get("mortgage_remaining", data.get("mortgage", 0))),
+        "current_rate": data.get("current_rate") or "",
+        "deal_expiry": data.get("deal_expiry") or "",
         "recommendation": data.get("recommendation") or "No recommendation available.",
         "selected_services": selected_services,
     }

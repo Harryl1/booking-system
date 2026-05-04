@@ -1,4 +1,4 @@
-from property_tool import to_float
+from property_tool import normalise_customer_intent, to_float
 
 
 SERVICE_VALUATION = "valuation"
@@ -43,6 +43,7 @@ def normalise_requested_services(services):
 
 def calculate_lead_score(data, marketing_consent=False):
     score = 10
+    customer_intent = normalise_customer_intent(data.get("customer_intent"))
     if marketing_consent:
         score += 10
     if data.get("phone"):
@@ -55,6 +56,14 @@ def calculate_lead_score(data, marketing_consent=False):
     if to_float(data.get("max_budget", 0)) > 300000:
         score += 10
     if data.get("plan") == "buy":
+        score += 10
+    if customer_intent == "homeowner_moving":
+        score += 10
+    elif customer_intent == "first_time_buyer":
+        score += 5
+    elif customer_intent == "remortgage":
+        score += 5
+    if to_float(data.get("deposit", 0)) >= 25000:
         score += 10
     selling_timeframe = (data.get("selling_timeframe") or "").strip().lower()
     timeframe_scores = {
@@ -75,6 +84,7 @@ def calculate_referral_score(
     referral_fee_disclosure=False,
 ):
     score = 0
+    customer_intent = normalise_customer_intent(data.get("customer_intent"))
     requested_services = normalise_requested_services(data.get("help_requested") or data.get("selected_services"))
     service_scores = {
         SERVICE_MORTGAGE: 30,
@@ -95,6 +105,10 @@ def calculate_referral_score(
     if to_float(data.get("max_budget", 0)) > 300000:
         score += 10
     if data.get("plan") == "buy":
+        score += 10
+    if customer_intent in {"first_time_buyer", "homeowner_moving", "remortgage"}:
+        score += 10
+    if to_float(data.get("deposit", 0)) >= 25000:
         score += 10
     selling_timeframe = (data.get("selling_timeframe") or "").strip().lower()
     timeframe_scores = {
@@ -119,6 +133,10 @@ def lead_score_factors(lead, referrals=None):
         factors.append("Local valuation requested")
     if lead["selling_timeframe"]:
         factors.append(f"Selling timeframe: {lead['selling_timeframe']}")
+    if "customer_intent" in lead.keys() and lead["customer_intent"]:
+        factors.append(f"Intent: {lead['customer_intent'].replace('_', ' ').title()}")
+    if "deposit" in lead.keys() and to_float(lead["deposit"], 0) > 0:
+        factors.append("Deposit captured")
     if to_float(lead["valuation"], 0) >= 250000:
         factors.append("Material property value")
     if (lead["lead_score"] or 0) >= 60:
@@ -143,6 +161,8 @@ def referral_score_factors(lead, referrals=None):
         factors.append("Referral fee disclosure accepted")
     if any(referral["service_type"] == SERVICE_MORTGAGE for referral in referrals):
         factors.append("Mortgage referral opportunity")
+    if "customer_intent" in lead.keys() and lead["customer_intent"] in {"first_time_buyer", "remortgage"}:
+        factors.append("Broker-origin mortgage opportunity")
     if any(referral["service_type"] == SERVICE_SOLICITOR for referral in referrals):
         factors.append("Conveyancing or solicitor referral opportunity")
     if any(referral["service_type"] == SERVICE_EPC for referral in referrals):

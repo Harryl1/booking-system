@@ -709,6 +709,9 @@
                                 <td>
                                     <div class="lead-name">{{ lead["name"] }}</div>
                                     <div class="lead-meta">{{ lead["source"]|title }}{% if lead["utm_campaign"] %} · {{ lead["utm_campaign"] }}{% endif %}</div>
+                                    {% if lead["customer_intent"] %}
+                                    <div class="lead-meta">{{ lead["customer_intent"]|replace("_", " ")|title }}</div>
+                                    {% endif %}
                                 </td>
                                 <td>
                                     <a class="phone-link" href="tel:{{ lead['phone'] }}">{{ lead["phone"] }}</a><br>
@@ -717,6 +720,9 @@
                                 <td class="lead-address">
                                     {{ lead["address"] }}<br>
                                     <span class="date-text">£{{ lead["valuation"] }}</span>
+                                    {% if lead["target_area"] %}
+                                    <br><span class="date-text">Target: {{ lead["target_area"] }}</span>
+                                    {% endif %}
                                 </td>
                                 <td>
                                     <div class="date-text">Agent</div>
